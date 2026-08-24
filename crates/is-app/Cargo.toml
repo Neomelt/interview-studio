@@ -1,0 +1,14 @@
+[package]
+name = "is-app"
+description = "Interview Studio —— 双轨会议/面试录音与分轨转写"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "interview-studio"
+path = "src/main.rs"
+
+[dependencies]
+is-audio.workspace = true
+
