@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/is-audio", "crates/is-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+is-audio = { path = "crates/is-audio" }

@@ -1,0 +1,19 @@
+/target
+Cargo.lock.bak
+
+# 录音与转写产物：绝不入库。这是个录音工具，误提交的代价是泄露真实对话。
+*.mkv
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.opus
+*.srt
+*.vtt
+/recordings/
+/Recordings/
+
+# 本地配置与凭据
+.env
+*.local.toml
+config.local.*
