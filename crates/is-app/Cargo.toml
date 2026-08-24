@@ -11,6 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 is-audio.workspace = true
+is-pipeline.workspace = true
+eframe = "0.35"
+
+[dev-dependencies]
+ab_glyph = "0.2"
 
 
 # ---- 打包 ----

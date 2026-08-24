@@ -173,3 +173,68 @@ mod tests {
         assert!(!Path::new("/tmp/should-not-exist.mkv").exists());
     }
 }
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use crate::{TITLE_MIX, mix_in_place, probe};
+
+    // 会录 3 秒真实音频（跑完即删）：
+    //   cargo test -p is-pipeline -- --ignored --nocapture
+    // 单元测试只覆盖参数构造，录音->停止->混音这条链只有真机能验。
+    #[test]
+    #[ignore = "会录真实音频"]
+    fn records_stops_and_mixes_on_real_devices() {
+        let Ok(info) = Command::new("pactl").arg("info").output() else {
+            return;
+        };
+        let text = String::from_utf8_lossy(&info.stdout);
+        let field = |k: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(k).map(|v| v.trim().to_string()))
+        };
+        let (Some(mic), Some(sink)) = (field("Default Source:"), field("Default Sink:")) else {
+            return;
+        };
+
+        let dir = std::env::temp_dir().join(format!("is-live-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("t.mkv");
+
+        let rec = Recording::start(&RecordConfig {
+            mic,
+            loopback: LoopbackSource::PulseMonitor(format!("{sink}.monitor")),
+            output: out.clone(),
+        })
+        .expect("起录音");
+        std::thread::sleep(Duration::from_secs(3));
+
+        let path = rec.stop().expect("停止");
+        assert_eq!(
+            probe::audio_track_count(&path).unwrap(),
+            2,
+            "停止后应当是双轨"
+        );
+        let dur = probe::duration_secs(&path).unwrap();
+        assert!(dur > 1.5, "录了 3 秒却只有 {dur:.1} 秒");
+
+        let report = mix_in_place(&path).expect("混音");
+        assert_eq!(probe::audio_track_count(&path).unwrap(), 3);
+        assert_eq!(probe::track_titles(&path).unwrap()[0], TITLE_MIX);
+        assert_eq!(
+            probe::default_track_flags(&path).unwrap(),
+            vec![true, false, false]
+        );
+        assert!(
+            report.mix_peak_db <= -0.5,
+            "混音削顶了: {}",
+            report.mix_peak_db
+        );
+
+        eprintln!(
+            "端到端通过：{dur:.1}s，混音峰值 {:.1} dB",
+            report.mix_peak_db
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
