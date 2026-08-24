@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # 隐私闸门单独成 job：它不依赖工具链，失败要能一眼看出是「泄露」而不是「编译错」
+  privacy:
+    name: 隐私扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/privacy-scan.sh
+
+  check:
+    name: 格式 / lint / 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets
+
+      # CI 容器里没有 PipeWire，依赖真实音频设备的测试会自行跳过
+      # （见 is-audio 里的 require! 宏），纯逻辑测试照常跑。
+      - name: 测试
+        run: cargo test --workspace
+
+  # 确认打包配置没坏。只在 CI 上验证能产出包，不上传——上传是 release 的事。
+  package:
+    name: 打包冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - run: cargo build --release --bin interview-studio
+      - run: cargo deb -p is-app --no-build
+      - run: cargo generate-rpm -p crates/is-app
+      - name: 列出产物
+        run: ls -lh target/debian/*.deb target/generate-rpm/*.rpm
