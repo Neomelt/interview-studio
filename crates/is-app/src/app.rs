@@ -203,6 +203,13 @@ impl eframe::App for App {
         if let Some(m) = &mut self.meters {
             m.tick();
         }
+        // ffmpeg 中途死掉时界面会一直走秒表，用户毫不知情。每帧探一次。
+        if let Stage::Recording { rec, .. } = &mut self.stage
+            && !rec.is_alive()
+        {
+            self.error = Some("录音进程已退出，录音中断了".into());
+            self.stop();
+        }
         if let Stage::Mixing { rx } = &self.stage
             && let Ok(res) = rx.try_recv()
         {
