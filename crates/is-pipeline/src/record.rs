@@ -1,5 +1,3 @@
-//! 双轨录音：麦克风一条轨，系统输出一条轨。
-
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -8,25 +6,17 @@ use is_audio::LoopbackSource;
 
 use crate::{Error, Result, TITLE_MIC, TITLE_SYS};
 
-/// ffmpeg 起来之后等这么久再确认它还活着。
-///
-/// 设备被占用之类的错误是启动后才暴露的，不确认的话用户会对着一个假的
-/// "录音中"界面坐满整场面试。
+// 采集源打不开是启动之后才暴露的，不确认的话用户会对着一个假的录音界面
 const STARTUP_GRACE: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone)]
 pub struct RecordConfig {
-    /// 麦克风采集源（Linux 上是 PulseAudio source 名）
     pub mic: String,
-    /// 系统输出采集源
     pub loopback: LoopbackSource,
     pub output: PathBuf,
 }
 
-/// 正在进行的录音。
-///
-/// 没有实现 `Drop` 自动停止——录音是有价值的数据，不该因为一个变量离开作用域
-/// 就被隐式结束。必须显式 [`Recording::stop`]。
+// 不实现 Drop 自动停止：录音是有价值的数据，不该因变量离开作用域被隐式结束
 pub struct Recording {
     child: Child,
     path: PathBuf,
@@ -73,7 +63,6 @@ impl Recording {
         Ok(rec)
     }
 
-    /// ffmpeg 还在跑吗。录音过程中要持续查——它中途死了必须让用户立刻知道。
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -82,13 +71,9 @@ impl Recording {
         &self.path
     }
 
-    /// 停止并等文件收尾。
-    ///
-    /// 必须用 SIGINT 而不是 kill：ffmpeg 收到 SIGINT 会写完容器尾再退出，
-    /// 直接 SIGKILL 会留下一个损坏的 mkv。
+    // 必须 SIGINT 而非 kill：ffmpeg 收到 SIGINT 才写完容器尾，SIGKILL 留下损坏文件
     pub fn stop(mut self) -> Result<PathBuf> {
         if self.is_alive() {
-            // Safety: 只是给一个我们自己 spawn 的、仍然存活的子进程发信号
             unsafe {
                 libc::kill(self.child.id() as libc::pid_t, libc::SIGINT);
             }
@@ -162,7 +147,6 @@ mod tests {
         let joined = a.join(" ");
         assert!(joined.contains("-i mic_src"));
         assert!(joined.contains("-i sink.monitor"));
-        // 两个 -map，缺一个就变成单轨了
         assert_eq!(a.iter().filter(|s| *s == "-map").count(), 2);
         assert!(joined.contains("0:a"));
         assert!(joined.contains("1:a"));

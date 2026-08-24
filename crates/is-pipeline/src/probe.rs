@@ -1,11 +1,8 @@
-//! ffprobe / ffmpeg 探测：轨数、时长、标题、电平。
-
 use std::path::Path;
 use std::process::Command;
 
 use crate::{Error, Result};
 
-/// 一条音轨的电平。低于 [`Levels::SILENT_DB`] 基本等于没录到东西。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Levels {
     pub mean_db: f32,
@@ -13,9 +10,8 @@ pub struct Levels {
 }
 
 impl Levels {
-    /// volumedetect 对全静音返回 -91 dB，留点余量当阈值。
+    // volumedetect 全静音时返回 -91 dB
     pub const SILENT_DB: f32 = -80.0;
-    /// 低于这个值虽然有信号，但小到基本听不清。
     pub const WEAK_DB: f32 = -50.0;
 
     pub fn is_silent(&self) -> bool {
@@ -26,7 +22,6 @@ impl Levels {
         !self.is_silent() && self.mean_db < Self::WEAK_DB
     }
 
-    /// 峰值撞到满刻度就是削顶了。
     pub fn is_clipping(&self) -> bool {
         self.peak_db >= -0.05
     }
@@ -54,7 +49,6 @@ fn ffprobe(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// 文件里有几条音轨。
 pub fn audio_track_count(path: &Path) -> Result<usize> {
     let out = ffprobe(&[
         "-v",
@@ -70,7 +64,6 @@ pub fn audio_track_count(path: &Path) -> Result<usize> {
     Ok(out.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
-/// 总时长（秒）。
 pub fn duration_secs(path: &Path) -> Result<f64> {
     let out = ffprobe(&[
         "-v",
@@ -86,7 +79,6 @@ pub fn duration_secs(path: &Path) -> Result<f64> {
         .map_err(|_| Error::Parse(format!("读不出时长: {out:?}")))
 }
 
-/// 各音轨的标题，顺序与轨号一致。没有标题的位置是空串。
 pub fn track_titles(path: &Path) -> Result<Vec<String>> {
     let out = ffprobe(&[
         "-v",
@@ -102,7 +94,6 @@ pub fn track_titles(path: &Path) -> Result<Vec<String>> {
     Ok(out.lines().map(|l| l.trim().to_string()).collect())
 }
 
-/// 哪几条轨带 default 标志。播放器默认播的就是第一条带标志的。
 pub fn default_track_flags(path: &Path) -> Result<Vec<bool>> {
     let out = ffprobe(&[
         "-v",
@@ -118,10 +109,7 @@ pub fn default_track_flags(path: &Path) -> Result<Vec<bool>> {
     Ok(out.lines().map(|l| l.trim() == "1").collect())
 }
 
-/// 量一条音轨的电平。
-///
-/// 注意不能给 ffmpeg 加 `-v error`：volumedetect 的结果是 info 级日志，
-/// 压掉日志级别就什么都读不到了（这个坑踩过）。
+// 不能加 -v error：volumedetect 的结果是 info 级日志，压掉就读不到
 pub fn track_levels(path: &Path, track: usize) -> Result<Levels> {
     let args: Vec<String> = [
         "-hide_banner",
@@ -162,8 +150,7 @@ fn grab_db(log: &str, key: &str) -> Result<f32> {
         .ok_or_else(|| Error::Parse(format!("日志里没有 {key}")))
 }
 
-/// 解码后音频数据的 MD5。用来证明「无损复制」不是嘴上说说——
-/// 比文件大小或码率靠谱得多，它是逐采样的。
+// 解码后再算，能证明逐采样一致，而不只是文件大小相同
 pub fn track_audio_md5(path: &Path, track: usize) -> Result<String> {
     let args: Vec<String> = [
         "-v",
@@ -195,7 +182,6 @@ pub fn track_audio_md5(path: &Path, track: usize) -> Result<String> {
         .ok_or_else(|| Error::Parse("ffmpeg 没有输出 MD5=".into()))
 }
 
-/// ffmpeg 和 ffprobe 都在不在。
 pub fn tools_available() -> bool {
     ["ffmpeg", "ffprobe"].iter().all(|b| {
         Command::new(b)

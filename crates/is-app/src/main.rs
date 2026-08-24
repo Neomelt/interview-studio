@@ -1,8 +1,3 @@
-//! Interview Studio 入口。
-//!
-//! 目前是命令行形态的骨架：先把「开始前检查」这条最要紧的链路跑通，
-//! GUI（M2）在此之上搭。
-
 use is_audio::{Backend, pulse::PulseBackend};
 
 fn main() -> std::process::ExitCode {
@@ -21,7 +16,6 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-/// 录音前的设备与路由检查。返回「现在录下去能不能录到对方」。
 fn preflight() -> is_audio::Result<bool> {
     let backend = PulseBackend::new()?;
 

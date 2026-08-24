@@ -1,11 +1,5 @@
-//! 实时电平表。
-//!
-//! 独立进程读采集源，**刻意不挂在录音那个 ffmpeg 上**。同进程方案试过：
-//! 电平走 FIFO，读端一消失 ffmpeg 就阻塞在写入上，进程还活着但录音停了——
-//! 比直接崩还阴险。录音这条路径不能有任何额外的失败面。
-//!
-//! 前提是同一个源可以被多个进程并发读取。已验证：两个读者在同一个 monitor 上
-//! 各自拿到分毫不差的数据，同时 ffmpeg 还在录。
+// 独立进程读电平，不挂在录音的 ffmpeg 上：同进程方案里电平走 FIFO，读端一消失
+// ffmpeg 就阻塞在写入上，进程还活着但录音停了。已验证一个源可被多进程并发读。
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
@@ -14,18 +8,11 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::{Error, Result};
 
-/// 采样率。电平表不需要高保真，16k 足够且省 CPU。
 const RATE: u32 = 16_000;
-/// 每次计算用多长的音频。100ms 在「跟手」和「不抖」之间比较平衡。
 const WINDOW_SAMPLES: usize = (RATE as usize) / 10;
 
-/// 静默时的读数。真正的数字静默是负无穷 dB，用这个值代表。
 pub const FLOOR_DB: f32 = -90.0;
 
-/// 一路实时电平。
-///
-/// 和 [`crate::Recording`] 一样不实现 `Drop` 自动停止——但理由相反：
-/// 电平表是可丢弃的，所以这里**实现** `Drop` 来收进程，避免留下孤儿 parec。
 pub struct Meter {
     child: Child,
     level: Arc<AtomicI32>,
@@ -33,8 +20,6 @@ pub struct Meter {
 }
 
 impl Meter {
-    /// 在指定采集源上起一路电平表。`source` 是 PulseAudio 的 source 名
-    /// （麦克风或某个 sink 的 `.monitor`）。
     pub fn start(source: &str) -> Result<Self> {
         let mut child = Command::new("parec")
             .args([
@@ -74,7 +59,7 @@ impl Meter {
                 let mut buf = vec![0u8; WINDOW_SAMPLES * 2];
                 let mut samples = vec![0i16; WINDOW_SAMPLES];
                 while !s.load(Ordering::Relaxed) {
-                    // read_exact：不足一整窗就不算，避免短读导致电平乱跳
+                    // 不足一整窗就不算，避免短读导致电平乱跳
                     if stdout.read_exact(&mut buf).is_err() {
                         break;
                     }
@@ -83,7 +68,6 @@ impl Meter {
                     }
                     l.store(db_to_raw(rms_dbfs(&samples)), Ordering::Relaxed);
                 }
-                // 进程没了就归零，别让界面停在最后一个读数上骗人
                 l.store(db_to_raw(FLOOR_DB), Ordering::Relaxed);
             })
             .map_err(Error::Io)?;
@@ -91,12 +75,10 @@ impl Meter {
         Ok(Self { child, level, stop })
     }
 
-    /// 最近一个窗口的电平（dBFS）。
     pub fn level_db(&self) -> f32 {
         raw_to_db(self.level.load(Ordering::Relaxed))
     }
 
-    /// 采集进程还活着吗。死了说明源被拔了或者被抢占了。
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -110,12 +92,11 @@ impl Drop for Meter {
     }
 }
 
-/// 一窗采样的 RMS，转成 dBFS。全零返回 [`FLOOR_DB`]。
 pub fn rms_dbfs(samples: &[i16]) -> f32 {
     if samples.is_empty() {
         return FLOOR_DB;
     }
-    // 用 f64 累加：i16 平方和在长窗口下会溢出 i32
+    // f64 累加：i16 平方和在长窗口下会溢出 i32
     let sum: f64 = samples.iter().map(|&s| (s as f64).powi(2)).sum();
     let rms = (sum / samples.len() as f64).sqrt();
     if rms <= 0.0 {
@@ -125,7 +106,7 @@ pub fn rms_dbfs(samples: &[i16]) -> f32 {
     (db as f32).max(FLOOR_DB)
 }
 
-// 原子变量存不了 f32，用 dB×100 的定点整数代替。
+// 原子变量存不了 f32，用 dB×100 的定点整数
 fn db_to_raw(db: f32) -> i32 {
     (db * 100.0) as i32
 }
@@ -144,7 +125,6 @@ mod tests {
         assert_eq!(rms_dbfs(&[]), FLOOR_DB);
     }
 
-    /// 满幅方波的 RMS 就是满刻度，应当接近 0 dBFS。
     #[test]
     fn full_scale_reads_about_zero() {
         let sq: Vec<i16> = (0..1000)
@@ -154,7 +134,6 @@ mod tests {
         assert!(db.abs() < 0.1, "满幅应当接近 0 dBFS，实际 {db}");
     }
 
-    /// 幅度减半应当正好降 6 dB —— 这是 dB 定义决定的，可以精确验证。
     #[test]
     fn halving_amplitude_drops_six_db() {
         let loud: Vec<i16> = (0..1000)
@@ -168,7 +147,6 @@ mod tests {
         );
     }
 
-    /// 长窗口下平方和会超过 i32，必须用更宽的类型累加。
     #[test]
     fn long_window_does_not_overflow() {
         let db = rms_dbfs(&vec![i16::MAX; 100_000]);
@@ -183,7 +161,6 @@ mod tests {
         }
     }
 
-    /// 真实设备上起一路电平表，确认能读出数且进程活着。
     #[test]
     fn starts_on_a_real_source() {
         let Ok(out) = Command::new("pactl").arg("info").output() else {
@@ -219,12 +196,6 @@ mod live_tests {
     use super::*;
     use std::time::Duration;
 
-    /// 会真的放出声音，所以默认不跑：
-    ///   cargo test -p is-pipeline -- --ignored --nocapture
-    ///
-    /// 上面那个 starts_on_a_real_source 只能证明电平表「起得来」——
-    /// 它读到 -90 时，坏掉的实现也会读到 -90。这个测试放一段已知的音进去，
-    /// 证明读数确实跟着声音走。
     #[test]
     #[ignore = "会外放声音"]
     fn responds_to_actual_audio() {
@@ -243,15 +214,13 @@ mod live_tests {
         std::thread::sleep(Duration::from_millis(300));
         let quiet = meter.level_db();
 
-        // 放 2 秒 -20dB 的正弦，音量不大但足够越过噪声
         let mut tone = Command::new("ffmpeg")
             .args([
                 "-hide_banner",
                 "-loglevel",
                 "error",
                 "-nostdin",
-                // -re 必须有：lavfi 会以最快速度生成，ffmpeg 灌完就退出，
-                // 流还没播出去就断了，电平表什么都读不到（这个坑踩过）
+                // -re 必须有：lavfi 以最快速度生成，ffmpeg 灌完就退出，流还没播出去就断了
                 "-re",
                 "-f",
                 "lavfi",

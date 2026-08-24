@@ -1,6 +1,4 @@
-//! Linux 实现：走 `pactl`，覆盖 PulseAudio 和 PipeWire。
-//!
-//! 不用 cpal 的原因见 crate 文档：cpal 在 Linux 默认走 ALSA，看不到 monitor 源。
+// 用 pactl 而不是 cpal：cpal 默认走 ALSA，看不到 monitor 源。
 
 use std::process::Command;
 
@@ -9,7 +7,6 @@ use crate::{Backend, Device, Error, LoopbackSource, Result};
 pub struct PulseBackend;
 
 impl PulseBackend {
-    /// 启动时探一次，缺工具或服务没跑就直接报错，别等录音时才发现。
     pub fn new() -> Result<Self> {
         pactl(&["info"])?;
         Ok(Self)
@@ -31,7 +28,6 @@ fn pactl(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `pactl info` 里形如 `Default Sink: NAME` 的行。
 fn info_field(field: &str) -> Result<String> {
     let text = pactl(&["info"])?;
     text.lines()
@@ -40,8 +36,6 @@ fn info_field(field: &str) -> Result<String> {
         .ok_or_else(|| Error::Parse(format!("pactl info 里没有 {field}")))
 }
 
-/// `pactl list sinks|sources` 里的 Name/Description 配对。
-/// short 格式没有 Description，只能从长格式里捞。
 fn descriptions(kind: &str) -> Result<Vec<(String, String)>> {
     let text = pactl(&["list", kind])?;
     let mut out = Vec::new();
@@ -59,8 +53,7 @@ fn descriptions(kind: &str) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
-/// `pactl list short sinks` → (index, name)。字段是 tab 分隔：
-/// `index \t name \t driver \t format \t state`
+// index \t name \t driver \t format \t state
 fn short_index_name(kind: &str) -> Result<Vec<(String, String)>> {
     let text = pactl(&["list", "short", kind])?;
     Ok(text
@@ -112,8 +105,7 @@ impl Backend for PulseBackend {
         devices("sources")
     }
 
-    /// `pactl list short sink-inputs` 的第 2 列是流所在的 sink 编号：
-    /// `input-index \t sink-index \t client \t driver \t format`
+    // 第 2 列是流所在的 sink 编号：input-index \t sink-index \t client \t ...
     fn active_sinks(&self) -> Result<Vec<Device>> {
         let text = pactl(&["list", "short", "sink-inputs"])?;
         let mut sink_indices: Vec<String> = text
@@ -133,9 +125,8 @@ impl Backend for PulseBackend {
             .collect())
     }
 
-    /// monitor 源名就是 sink 名加 `.monitor`，但仍要确认它真的存在——
-    /// 某些虚拟 sink 不带 monitor，直接拼名字会拿到一个打不开的源。
     fn loopback_source(&self, sink: &Device) -> Result<LoopbackSource> {
+        // 有些虚拟 sink 不带 monitor，拼出来的名字打不开，必须确认存在
         let monitor = format!("{}.monitor", sink.id);
         let exists = short_index_name("sources")?
             .iter()
@@ -158,7 +149,6 @@ mod tests {
         PulseBackend::new().ok()
     }
 
-    /// 这些测试跑在真实机器上，没有 PipeWire 就跳过（比如 CI 容器里）。
     macro_rules! require {
         ($b:ident) => {
             let Some($b) = backend() else {
@@ -175,7 +165,6 @@ mod tests {
         assert!(!sinks.is_empty(), "至少该有一个输出设备");
         for s in &sinks {
             assert!(!s.id.is_empty());
-            // Description 是给人看的，空了界面上会只剩一串 alsa_output.pci-...
             assert!(!s.description.is_empty(), "{} 没有 Description", s.id);
         }
     }
@@ -189,7 +178,6 @@ mod tests {
         assert!(b.sources().unwrap().iter().any(|x| x.id == s.id));
     }
 
-    /// 每个真实输出设备都该能解析出 monitor 源——这是能录到对方声音的前提。
     #[test]
     fn every_sink_resolves_a_monitor() {
         require!(b);

@@ -1,32 +1,17 @@
-//! 给双轨录音补一条混音轨并设为默认。
-//!
-//! 目的：播放器默认只播第一条轨。原来第一条是麦克风，所以双击播放只听得到
-//! 自己，很容易误判成"没录到对方"。补一条混音轨放在最前并置默认标志，
-//! 双击就能听到两个人；原两轨仍在轨1/轨2，转写时照样天然分离说话人。
-//!
-//! 刻意在录制**之后**做，而不是录制时实时混：录音这条路径不能失败，
-//! 合成挂了顶多没有混音轨，双轨原件还在。
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::probe::{self, Levels};
 use crate::{Error, MixReport, Result, TITLE_MIC, TITLE_MIX, TITLE_SYS};
 
-/// 限幅阈值，-1 dBFS 的线性值。
-///
-/// 两轨直接相加会削顶——这不是理论担忧：实测一场 39 分钟的录音，
-/// 不加限幅有 486 个采样撞满刻度。限幅后峰值降到 -1.0 dB，
-/// 而平均电平不变（只削峰，不损响度）。
+// 直接相加会削顶：实测 39 分钟录音有 486 个采样撞满刻度。-1 dBFS 限幅后
+// 峰值 -1.0 dB，平均电平不变。
 const LIMIT_LINEAR: &str = "0.891";
 
-/// 时长校验容差（秒）。重新封装容器会有零点几秒的出入，但不该差出几秒。
 const DURATION_TOLERANCE: f64 = 2.0;
 
-/// 原地给 `path` 补混音轨。已经是三轨就跳过。
-///
-/// 全程不动原文件：先写临时文件，校验通过才替换。中途失败或断电最多留个
-/// 临时文件，不会毁掉录音。
+// 播放器默认只播第一条轨（原来是麦克风），所以双击只听得到自己。
+// 录完再混而不是实时混：录音这条路径不能失败，合成挂了原件还在。
 pub fn mix_in_place(path: &Path) -> Result<MixReport> {
     let tracks = probe::audio_track_count(path)?;
     if tracks == 3 {
@@ -94,7 +79,6 @@ fn build_args(input: &Path, output: &Path) -> Vec<String> {
         &input.to_string_lossy(),
         "-filter_complex",
         &filter,
-        // 混音在前并置默认，原两轨码流直接搬运（copy = 不解码不重编码 = 无损）
         "-map",
         "[mix]",
         "-map",
@@ -105,6 +89,7 @@ fn build_args(input: &Path, output: &Path) -> Vec<String> {
         "flac",
         "-sample_fmt:a:0",
         "s16",
+        // copy = 不解码不重编码，原两轨无损
         "-c:a:1",
         "copy",
         "-c:a:2",
@@ -128,7 +113,6 @@ fn build_args(input: &Path, output: &Path) -> Vec<String> {
     .collect()
 }
 
-/// 替换原文件之前必须过的关：轨数对、时长对、原两轨逐采样没变。
 fn verify(original: &Path, produced: &Path) -> Result<()> {
     let n = probe::audio_track_count(produced)?;
     if n != 3 {
@@ -143,7 +127,7 @@ fn verify(original: &Path, produced: &Path) -> Result<()> {
         return Err(Error::Verify(format!("时长对不上：{d0:.2}s -> {d1:.2}s")));
     }
 
-    // 「无损」不能靠嘴说。比对解码后音频的 MD5，逐采样一致才算数。
+    // 比对解码后的 MD5，逐采样一致才算无损
     for (src, dst) in [(0usize, 1usize), (1, 2)] {
         let a = probe::track_audio_md5(original, src)?;
         let b = probe::track_audio_md5(produced, dst)?;
@@ -162,7 +146,6 @@ fn tmp_path(path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// 出错时清掉半成品，别在 /tmp 或录音目录里留垃圾。
 struct Cleanup(PathBuf);
 
 impl Drop for Cleanup {
@@ -173,7 +156,6 @@ impl Drop for Cleanup {
     }
 }
 
-/// 两轨都正常才算这次录音成功。给界面用的判定。
 pub fn verdicts(path: &Path, mic_track: usize, sys_track: usize) -> Result<(Levels, Levels)> {
     Ok((
         probe::track_levels(path, mic_track)?,
@@ -186,7 +168,6 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// 临时目录守卫，测试结束自动清干净。
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -211,8 +192,7 @@ mod tests {
         }
     }
 
-    /// 造一个双轨素材：两条不同频率的正弦，满幅。
-    /// 满幅是故意的——两条相加必然削顶，正好用来验证限幅器真的在干活。
+    // 满幅是故意的：两条相加必然削顶，用来验证限幅器真在干活
     fn synth_two_track(path: &Path, secs: u32) {
         let ok = Command::new("ffmpeg")
             .args([
@@ -269,7 +249,6 @@ mod tests {
         assert!(ok);
     }
 
-    /// 没装 ffmpeg 就跳过（CI 容器里可能没有）。
     macro_rules! need_ffmpeg {
         () => {
             if !probe::tools_available() {
@@ -293,14 +272,12 @@ mod tests {
             probe::track_titles(&f).unwrap(),
             vec![TITLE_MIX, TITLE_MIC, TITLE_SYS]
         );
-        // 播放器认的是 default 标志——混音必须是唯一带标志的那条
         assert_eq!(
             probe::default_track_flags(&f).unwrap(),
             vec![true, false, false]
         );
     }
 
-    /// 「无损」的证明：解码后逐采样比对，不是看文件大小。
     #[test]
     fn original_tracks_survive_bit_identical() {
         need_ffmpeg!();
@@ -320,7 +297,6 @@ mod tests {
         assert_eq!(before, after, "原两轨被改动了");
     }
 
-    /// 两条满幅正弦相加必然超过 0 dBFS，限幅器必须把它压回去。
     #[test]
     fn limiter_prevents_clipping() {
         need_ffmpeg!();
@@ -352,7 +328,6 @@ mod tests {
         assert_eq!(probe::track_audio_md5(&f, 0).unwrap(), md5_before);
     }
 
-    /// 轨数不对时必须报错且**不碰原文件**。
     #[test]
     fn wrong_track_count_leaves_file_untouched() {
         need_ffmpeg!();

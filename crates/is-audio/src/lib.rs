@@ -1,19 +1,7 @@
-//! 音频设备枚举与录音源解析。
-//!
-//! 面试录音要同时抓两路：麦克风（你）和系统输出（对方）。后者在不同平台上
-//! 机制完全不同——Linux 是 PulseAudio/PipeWire 的 `.monitor` 源，Windows 是
-//! WASAPI 的 loopback 标志。[`Backend`] 就是为了把这个差异挡住。
-//!
-//! 目前只有 Linux 实现（[`pulse::PulseBackend`]），走 `pactl`。之所以不用
-//! cpal：cpal 在 Linux 默认走 ALSA，拿不到 monitor 源；而 `pactl` 这条路是
-//! 现有 bash 版本已经跑了几十场录音验证过的。Windows 那版再上 cpal。
-
 pub mod pulse;
 
 use std::fmt;
 
-/// 一个音频设备。`id` 是给程序用的稳定标识（Linux 上是 sink/source 名），
-/// `description` 是给人看的。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
     pub id: String,
@@ -30,34 +18,27 @@ impl fmt::Display for Device {
     }
 }
 
-/// 录制系统输出所需要的采集源。Linux 上是个 monitor 源名；
-/// Windows 上会是「某个输出设备 + loopback 标志」，所以这里留成枚举而不是裸字符串。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoopbackSource {
-    /// PulseAudio/PipeWire 的 monitor 源名，可直接当采集设备打开
     PulseMonitor(String),
-    /// Windows：以 loopback 模式打开这个输出设备（预留，暂未实现）
     #[allow(dead_code)]
     WasapiLoopback(String),
 }
 
-/// 默认输出设备与「实际在出声的设备」是否一致。
-///
-/// 这是面试录音最容易翻车的地方：PipeWire 会按应用记住输出设备
-/// （module-stream-restore），所以完全可能出现默认设备是耳机、
-/// 但会议软件被记成了 HDMI——录出来对方那条轨全程静音，而你耳朵里一切正常。
 #[derive(Clone, Debug, PartialEq, Eq)]
+// PipeWire 按应用记住输出设备，默认设备与实际出声设备可能不一致：
+// 会议软件被记去别的设备时，对方那条轨全程静音，而耳朵里一切正常。
 pub enum Routing {
-    /// 当前没有任何应用在放声音，无法判断
-    NoAudioPlaying { default: Device },
-    /// 在出声的设备就是默认设备
-    Aligned { default: Device },
-    /// 默认设备在出声，但还有别的应用去了其它设备
+    NoAudioPlaying {
+        default: Device,
+    },
+    Aligned {
+        default: Device,
+    },
     PartlyElsewhere {
         default: Device,
         elsewhere: Vec<Device>,
     },
-    /// 所有声音都去了别的设备——照现在的配置录，对方那轨会是静音
     AllElsewhere {
         default: Device,
         elsewhere: Vec<Device>,
@@ -65,12 +46,10 @@ pub enum Routing {
 }
 
 impl Routing {
-    /// 照当前配置录，对方那条轨会不会有声音。
     pub fn will_capture_system_audio(&self) -> bool {
         matches!(self, Self::Aligned { .. } | Self::PartlyElsewhere { .. })
     }
 
-    /// 给人看的一句话结论。
     pub fn summary(&self) -> String {
         match self {
             Self::NoAudioPlaying { default } => {
@@ -100,7 +79,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    /// 后端工具不可用（Linux 上是 pactl 缺失或 PipeWire 没跑）
     Unavailable(String),
     Parse(String),
 }
@@ -116,20 +94,14 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// 平台音频后端。Windows 版将来实现同一套接口，上层不用改。
 pub trait Backend {
-    /// 默认输出设备（对方声音从这儿出来）
     fn default_sink(&self) -> Result<Device>;
-    /// 默认输入设备（你的麦克风）
     fn default_source(&self) -> Result<Device>;
     fn sinks(&self) -> Result<Vec<Device>>;
     fn sources(&self) -> Result<Vec<Device>>;
-    /// 此刻真正有音频流在播的输出设备
     fn active_sinks(&self) -> Result<Vec<Device>>;
-    /// 把一个输出设备转成「能录到它声音」的采集源
     fn loopback_source(&self, sink: &Device) -> Result<LoopbackSource>;
 
-    /// 默认设备与实际出声设备是否对得上。录音前必查。
     fn check_routing(&self) -> Result<Routing> {
         let default = self.default_sink()?;
         let active = self.active_sinks()?;
@@ -161,8 +133,6 @@ mod tests {
         }
     }
 
-    /// 用假后端把 check_routing 的四个分支都走一遍，
-    /// 不依赖跑测试的机器上插着什么设备。
     struct Fake {
         default: Device,
         active: Vec<Device>,
@@ -200,9 +170,9 @@ mod tests {
 
     #[test]
     fn no_audio_playing() {
+        // 测不出来 ≠ 一定能录到，不能报「没问题」
         let r = routing("earpods", &[]);
         assert!(matches!(r, Routing::NoAudioPlaying { .. }));
-        // 测不出来 ≠ 一定会失败，但也不能报「没问题」
         assert!(!r.will_capture_system_audio());
     }
 
@@ -215,7 +185,6 @@ mod tests {
 
     #[test]
     fn partly_elsewhere_still_captures() {
-        // 会议软件在默认设备上，别的应用跑去了 HDMI —— 仍然录得到对方
         let r = routing("earpods", &["earpods", "hdmi"]);
         match &r {
             Routing::PartlyElsewhere { elsewhere, .. } => {
@@ -227,7 +196,6 @@ mod tests {
         assert!(r.will_capture_system_audio());
     }
 
-    /// 这就是会让面试录音报废的那种情况
     #[test]
     fn all_elsewhere_means_silent_track() {
         let r = routing("earpods", &["hdmi"]);
