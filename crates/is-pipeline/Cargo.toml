@@ -1,0 +1,10 @@
+[package]
+name = "is-pipeline"
+description = "录音、混音与音频探测。ffmpeg 子进程驱动。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+is-audio.workspace = true
+libc = "0.2"
