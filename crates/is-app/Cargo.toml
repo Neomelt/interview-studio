@@ -25,7 +25,6 @@ ab_glyph = "0.2"
 
 [package.metadata.deb]
 name = "interview-studio"
-maintainer-scripts = "../../packaging/deb"
 depends = "$auto, ffmpeg, pulseaudio-utils"
 section = "sound"
 assets = [
