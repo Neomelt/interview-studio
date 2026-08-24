@@ -12,3 +12,30 @@ path = "src/main.rs"
 [dependencies]
 is-audio.workspace = true
 
+
+# ---- 打包 ----
+# ffmpeg 负责录制与混音；pactl 负责设备枚举（Fedora/Debian 都在 pulseaudio-utils 里）。
+# 这两个是运行时硬依赖，缺了应用起不来，所以写进包依赖而不是运行时才报错。
+
+[package.metadata.deb]
+name = "interview-studio"
+maintainer-scripts = "../../packaging/deb"
+depends = "$auto, ffmpeg, pulseaudio-utils"
+section = "sound"
+assets = [
+    ["../../target/release/interview-studio", "usr/bin/", "755"],
+    ["../../packaging/interview-studio.desktop", "usr/share/applications/", "644"],
+    ["../../README.md", "usr/share/doc/interview-studio/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "interview-studio"
+assets = [
+    { source = "target/release/interview-studio", dest = "/usr/bin/interview-studio", mode = "755" },
+    { source = "packaging/interview-studio.desktop", dest = "/usr/share/applications/interview-studio.desktop", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/interview-studio/README.md", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+ffmpeg = "*"
+pulseaudio-utils = "*"
