@@ -83,9 +83,7 @@ impl App {
         crate::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.set_visuals(visuals());
 
-        let out_dir = std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join("Recordings"))
-            .unwrap_or_else(|_| PathBuf::from("Recordings"));
+        let out_dir = crate::paths::recordings_dir();
 
         let mut app = Self {
             devices: None,
@@ -152,17 +150,10 @@ impl App {
 
     fn start(&mut self) {
         let Some(d) = &self.devices else { return };
-        let stamp = std::process::Command::new("date")
-            .arg("+%Y-%m-%d_%H%M%S")
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|| "recording".into());
-
         let cfg = RecordConfig {
             mic: d.mic.id.clone(),
             loopback: d.loopback.clone(),
-            output: self.out_dir.join(format!("interview_{stamp}.mkv")),
+            output: self.out_dir.join(crate::paths::filename_for_now()),
         };
         match Recording::start(&cfg) {
             Ok(rec) => {

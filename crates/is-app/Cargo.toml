@@ -13,6 +13,7 @@ path = "src/main.rs"
 is-audio.workspace = true
 is-pipeline.workspace = true
 eframe = "0.35"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 ab_glyph = "0.2"
@@ -31,6 +32,14 @@ assets = [
     ["../../target/release/interview-studio", "usr/bin/", "755"],
     ["../../packaging/interview-studio.desktop", "usr/share/applications/", "644"],
     ["../../README.md", "usr/share/doc/interview-studio/README.md", "644"],
+    ["../../packaging/icons/icon-16.png", "usr/share/icons/hicolor/16x16/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-24.png", "usr/share/icons/hicolor/24x24/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-32.png", "usr/share/icons/hicolor/32x32/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-48.png", "usr/share/icons/hicolor/48x48/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-64.png", "usr/share/icons/hicolor/64x64/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-128.png", "usr/share/icons/hicolor/128x128/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-256.png", "usr/share/icons/hicolor/256x256/apps/interview-studio.png", "644"],
+    ["../../packaging/icons/icon-512.png", "usr/share/icons/hicolor/512x512/apps/interview-studio.png", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -39,6 +48,14 @@ assets = [
     { source = "target/release/interview-studio", dest = "/usr/bin/interview-studio", mode = "755" },
     { source = "packaging/interview-studio.desktop", dest = "/usr/share/applications/interview-studio.desktop", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/interview-studio/README.md", mode = "644" },
+    { source = "packaging/icons/icon-16.png", dest = "/usr/share/icons/hicolor/16x16/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-24.png", dest = "/usr/share/icons/hicolor/24x24/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-32.png", dest = "/usr/share/icons/hicolor/32x32/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-64.png", dest = "/usr/share/icons/hicolor/64x64/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/interview-studio.png", mode = "644" },
+    { source = "packaging/icons/icon-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/interview-studio.png", mode = "644" },
 ]
 
 [package.metadata.generate-rpm.requires]

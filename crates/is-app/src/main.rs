@@ -1,6 +1,7 @@
 mod app;
 mod fonts;
 mod meters;
+mod paths;
 
 use eframe::egui;
 
