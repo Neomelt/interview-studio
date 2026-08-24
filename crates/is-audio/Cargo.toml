@@ -1,0 +1,6 @@
+[package]
+name = "is-audio"
+description = "音频设备枚举与录音后端抽象。Linux 走 PulseAudio/PipeWire，Windows 留接口。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
