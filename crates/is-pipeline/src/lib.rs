@@ -7,8 +7,10 @@
 //! 三个能力：
 //! - [`record`]：起停双轨录音，停止走 SIGINT 让 ffmpeg 写完容器尾
 //! - [`mix`]：补一条混音轨并设为默认，原两轨无损保留
+//! - [`meter`]：录音过程中的实时电平，独立进程，与录音解耦
 //! - [`probe`]：读时长、轨数、电平
 
+pub mod meter;
 pub mod mix;
 pub mod probe;
 pub mod record;
@@ -16,6 +18,7 @@ pub mod record;
 use std::fmt;
 use std::path::PathBuf;
 
+pub use meter::{FLOOR_DB, Meter};
 pub use mix::mix_in_place;
 pub use probe::{Levels, track_levels};
 pub use record::{RecordConfig, Recording};
