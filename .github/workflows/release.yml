@@ -76,7 +76,7 @@ jobs:
           generate_release_notes: true
           draft: true # 先出草稿，人工看一眼再点发布
 
-  # Windows 后端还没实现（见 PRD 里程碑 M6）。等 is-audio 有了 WASAPI 实现，
+  # Windows 后端还没实现。等 is-audio 有了 WASAPI 实现，
   # 把下面这个 job 打开即可，流水线其余部分不用动。
   #
   # windows:

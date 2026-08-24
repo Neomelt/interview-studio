@@ -7,7 +7,7 @@ that simply double-clicking the file plays both voices.
 Two separate tracks mean speaker separation is free — no diarization needed.
 Transcribing each track independently yields a role-labelled dialogue.
 
-> Status: early development. See [PRD.md](PRD.md) for the full design (Chinese).
+> Status: early development.
 
 ## Why two tracks
 
