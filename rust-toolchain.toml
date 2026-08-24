@@ -1,0 +1,5 @@
+# 钉住工具链：CI 用 stable 时 clippy 版本会漂，本地绿而 CI 红。
+# 升级版本是一次有意的改动，不该由 CI 的滚动更新替我们决定。
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

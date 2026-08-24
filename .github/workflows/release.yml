@@ -24,7 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/privacy-scan.sh
-      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 rust-toolchain.toml 钉住的工具链
+        run: rustup show
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
@@ -34,7 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 rust-toolchain.toml 钉住的工具链
+        run: rustup show
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:

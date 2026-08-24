@@ -63,8 +63,8 @@ impl Meter {
                     if stdout.read_exact(&mut buf).is_err() {
                         break;
                     }
-                    for (i, c) in buf.chunks_exact(2).enumerate() {
-                        samples[i] = i16::from_le_bytes([c[0], c[1]]);
+                    for (i, c) in buf.as_chunks::<2>().0.iter().enumerate() {
+                        samples[i] = i16::from_le_bytes(*c);
                     }
                     l.store(db_to_raw(rms_dbfs(&samples)), Ordering::Relaxed);
                 }

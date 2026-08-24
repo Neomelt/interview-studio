@@ -17,7 +17,9 @@ pub fn free_bytes(path: &Path) -> Option<u64> {
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
         return None;
     }
-    Some(st.f_bavail as u64 * st.f_frsize as u64)
+    // 这两个字段在我们支持的目标上都是 u64。若将来加 32 位目标，
+    // 这里需要显式加宽，否则大磁盘会溢出。
+    Some(st.f_bavail * st.f_frsize)
 }
 
 pub fn human_bytes(n: u64) -> String {
