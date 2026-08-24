@@ -6,13 +6,17 @@
 //!
 //! 三个能力：
 //! - [`record`]：起停双轨录音，停止走 SIGINT 让 ffmpeg 写完容器尾
+//! - [`mix`]：补一条混音轨并设为默认，原两轨无损保留
 //! - [`probe`]：读时长、轨数、电平
 
+pub mod mix;
 pub mod probe;
 pub mod record;
 
 use std::fmt;
+use std::path::PathBuf;
 
+pub use mix::mix_in_place;
 pub use probe::{Levels, track_levels};
 pub use record::{RecordConfig, Recording};
 
@@ -58,3 +62,12 @@ impl From<std::io::Error> for Error {
     }
 }
 
+/// 一次混音的结果。
+#[derive(Debug, Clone)]
+pub struct MixReport {
+    pub path: PathBuf,
+    /// 混音轨的峰值电平，用来确认没有削顶
+    pub mix_peak_db: f32,
+    /// 已经是三轨、这次跳过了
+    pub skipped: bool,
+}
