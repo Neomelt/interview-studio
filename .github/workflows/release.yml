@@ -87,7 +87,7 @@ jobs:
   #   runs-on: windows-latest
   #   steps:
   #     - uses: actions/checkout@v4
-  #     - uses: dtolnay/rust-toolchain@stable
+  #     - run: rustup show
   #     - uses: taiki-e/install-action@v2
   #       with: { tool: cargo-wix }
   #     - run: cargo wix --package is-app --nocapture
