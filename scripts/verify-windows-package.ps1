@@ -30,9 +30,11 @@ if (Test-Path (Join-Path $root "ffplay.exe")) { throw "ffplay.exe 用不上，�
 # 用的是随包那份的绝对路径，不是 PATH 上的——正是程序运行时的调用方式。
 Write-Host "==> 跑一下随包的 ffmpeg"
 $ff = Join-Path $root "ffmpeg.exe"
-$ver = & $ff -hide_banner -version 2>&1 | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) { throw "随包的 ffmpeg 起不来: $ver" }
-Write-Host "    $ver"
+# 先收完整输出再取第一行：Select-Object -First 1 会提前终止管道并把原生命令
+# 一起掐掉，$LASTEXITCODE 于是非零——那是管道的锅，不是 ffmpeg 的。
+$ver = @(& $ff -hide_banner -version 2>&1)
+if ($LASTEXITCODE -ne 0) { throw "随包的 ffmpeg 起不来: $($ver -join "`n")" }
+Write-Host "    $($ver[0])"
 
 # 真正走一遍产物格式：两路裸 PCM -> 双轨 FLAC 的 MKV，正是 Windows 录音
 # 停止时做的事。跑得通才说明随包的这份 ffmpeg 带着我们需要的编码器。
@@ -51,8 +53,9 @@ $out = Join-Path $check "t.mkv"
 if ($LASTEXITCODE -ne 0) { throw "双轨封装失败" }
 
 $fp = Join-Path $root "ffprobe.exe"
-$n = (& $fp -v error -select_streams a -show_entries stream=index -of csv=p=0 $out | Measure-Object).Count
-if ($n -ne 2) { throw "产物应当是双轨，实际 $n 轨" }
+$streams = @(& $fp -v error -select_streams a -show_entries stream=index -of csv=p=0 $out)
+if ($LASTEXITCODE -ne 0) { throw "随包的 ffprobe 起不来" }
+if ($streams.Count -ne 2) { throw "产物应当是双轨，实际 $($streams.Count) 轨" }
 Write-Host "    双轨 MKV 产出正常"
 
 Remove-Item -Recurse -Force $check -ErrorAction SilentlyContinue
