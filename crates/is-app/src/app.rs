@@ -3,7 +3,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use is_audio::{Backend, Device, LoopbackSource, Routing, pulse::PulseBackend};
+use is_audio::{Backend, Device, LoopbackSource, Routing};
 use is_pipeline::{
     Levels, Meter, RecordConfig, Recording, disk, mix_in_place, probe, track_levels,
 };
@@ -70,6 +70,9 @@ enum Stage {
 }
 
 pub struct App {
+    // 后端留着不只是为了枚举设备：路由不对时要拿它去切默认输出，
+    // 而能不能切是平台能力，得问后端而不是在这里写死。
+    backend: Option<Box<dyn Backend>>,
     devices: Option<Devices>,
     routing: Option<Routing>,
     meters: Option<Meters>,
@@ -86,6 +89,7 @@ impl App {
         let out_dir = crate::paths::recordings_dir();
 
         let mut app = Self {
+            backend: None,
             devices: None,
             routing: None,
             meters: None,
@@ -101,9 +105,10 @@ impl App {
         self.error = None;
         self.meters = None;
 
-        let backend = match PulseBackend::new() {
+        let backend = match is_audio::default_backend() {
             Ok(b) => b,
             Err(e) => {
+                self.backend = None;
                 self.error = Some(e.to_string());
                 return;
             }
@@ -124,22 +129,33 @@ impl App {
             ))
         })();
 
+        self.backend = Some(backend);
+
         match resolved {
             Ok((devices, routing)) => {
-                let LoopbackSource::PulseMonitor(sys_src) = &devices.loopback else {
-                    self.error = Some("这个平台的采集后端还没实现".into());
-                    return;
-                };
-                match (Meter::start(&devices.mic.id), Meter::start(sys_src)) {
-                    (Ok(mic), Ok(sys)) => {
-                        self.meters = Some(Meters {
-                            mic,
-                            sys,
-                            mic_silent_since: None,
-                            sys_silent_since: None,
-                        });
+                // 设备与路由检查在两个平台上都成立，先落盘；电平表另说。
+                match &devices.loopback {
+                    LoopbackSource::PulseMonitor(sys_src) => {
+                        match (Meter::start(&devices.mic.id), Meter::start(sys_src)) {
+                            (Ok(mic), Ok(sys)) => {
+                                self.meters = Some(Meters {
+                                    mic,
+                                    sys,
+                                    mic_silent_since: None,
+                                    sys_silent_since: None,
+                                });
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                self.error = Some(format!("电平表起不来: {e}"))
+                            }
+                        }
                     }
-                    (Err(e), _) | (_, Err(e)) => self.error = Some(format!("电平表起不来: {e}")),
+                    // parec 是 PulseAudio 的工具，Windows 上没有对应物，电平要
+                    // 由原生采集顺带算出来。那部分还没实现。
+                    LoopbackSource::WasapiLoopback(_) => {
+                        self.error =
+                            Some("Windows 的电平表还没实现，设备与路由检查照常可用".into());
+                    }
                 }
                 self.devices = Some(devices);
                 self.routing = Some(routing);
@@ -253,6 +269,11 @@ impl eframe::App for App {
 
 impl App {
     fn preflight_card(&mut self, ui: &mut egui::Ui) {
+        // refresh() 会重建 backend，不能在还借着它画界面的时候调用，
+        // 所以先记下来，出了闭包再执行。
+        let mut switched = false;
+        let mut err = None;
+
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(egui::RichText::new("开始前检查").strong());
@@ -274,21 +295,41 @@ impl App {
                         && let Some(target) = elsewhere.first().cloned()
                     {
                         ui.add_space(4.0);
-                        if ui
-                            .button(format!("改用 {target}"))
-                            .on_hover_text("把系统默认输出切到这台设备，然后重新检查")
-                            .clicked()
-                        {
-                            let _ = std::process::Command::new("pactl")
-                                .args(["set-default-sink", &target.id])
-                                .status();
-                            self.refresh();
+                        // 能不能替用户切是平台能力：Linux 上 pactl 就能改，
+                        // Windows 上没有受支持的 API，只能说清楚该去哪儿改。
+                        match self.backend.as_deref() {
+                            Some(b) if b.can_set_default_sink() => {
+                                if ui
+                                    .button(format!("改用 {target}"))
+                                    .on_hover_text("把系统默认输出切到这台设备，然后重新检查")
+                                    .clicked()
+                                {
+                                    match b.set_default_sink(&target) {
+                                        Ok(()) => switched = true,
+                                        Err(e) => err = Some(e.to_string()),
+                                    }
+                                }
+                            }
+                            _ => {
+                                ui.colored_label(
+                                    egui::Color32::from_gray(150),
+                                    format!(
+                                        "到系统的声音设置里把默认输出改成「{target}」，再点「重新检查」"
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
                 None => row(ui, false, "路由", "还没检查"),
             }
         });
+
+        if switched {
+            self.refresh();
+        } else if err.is_some() {
+            self.error = err;
+        }
     }
 
     fn meter_section(&mut self, ui: &mut egui::Ui) {

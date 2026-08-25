@@ -125,6 +125,14 @@ impl Backend for PulseBackend {
             .collect())
     }
 
+    fn can_set_default_sink(&self) -> bool {
+        true
+    }
+
+    fn set_default_sink(&self, sink: &Device) -> Result<()> {
+        pactl(&["set-default-sink", &sink.id]).map(|_| ())
+    }
+
     fn loopback_source(&self, sink: &Device) -> Result<LoopbackSource> {
         // 有些虚拟 sink 不带 monitor，拼出来的名字打不开，必须确认存在
         let monitor = format!("{}.monitor", sink.id);

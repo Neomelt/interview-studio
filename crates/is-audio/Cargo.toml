@@ -1,6 +1,18 @@
 [package]
 name = "is-audio"
-description = "音频设备枚举与录音后端抽象。Linux 走 PulseAudio/PipeWire，Windows 留接口。"
+description = "音频设备枚举与录音后端抽象。Linux 走 PulseAudio/PipeWire，Windows 走 WASAPI。"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+# 用 windows 而不是 windows-sys：这里全是 COM 接口调用，windows 提供带
+# 引用计数与 RAII 的接口封装，windows-sys 只有裸 vtable，手写容易漏 Release。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }

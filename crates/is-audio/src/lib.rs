@@ -1,6 +1,20 @@
+#[cfg(unix)]
 pub mod pulse;
+#[cfg(windows)]
+pub mod wasapi;
 
 use std::fmt;
+
+// 让上层不用到处写 cfg：本平台该用哪个后端，在这里定一次。
+#[cfg(unix)]
+pub fn default_backend() -> Result<Box<dyn Backend>> {
+    Ok(Box::new(pulse::PulseBackend::new()?))
+}
+
+#[cfg(windows)]
+pub fn default_backend() -> Result<Box<dyn Backend>> {
+    Ok(Box::new(wasapi::WasapiBackend::new()?))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -101,6 +115,19 @@ pub trait Backend {
     fn sources(&self) -> Result<Vec<Device>>;
     fn active_sinks(&self) -> Result<Vec<Device>>;
     fn loopback_source(&self, sink: &Device) -> Result<LoopbackSource>;
+
+    // 路由不对时能不能替用户切默认输出。Linux 上 pactl 就能改；Windows 上没有
+    // 受支持的 API（只有未文档化的 IPolicyConfig，跨版本会碎），只能让界面改成
+    // 引导用户自己去系统设置里改。
+    fn can_set_default_sink(&self) -> bool {
+        false
+    }
+
+    fn set_default_sink(&self, _sink: &Device) -> Result<()> {
+        Err(Error::Unavailable(
+            "这个平台不支持由程序切换默认输出设备".into(),
+        ))
+    }
 
     fn check_routing(&self) -> Result<Routing> {
         let default = self.default_sink()?;
