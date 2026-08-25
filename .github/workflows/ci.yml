@@ -34,8 +34,35 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets
 
+      # 混音/探测的测试要有 ffmpeg 才跑得起来。runner 镜像不保证带，显式装上——
+      # 缺了的话 need_ffmpeg! 会在 CI 下直接失败，不会悄悄跳过变成绿灯。
+      - name: 装 ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       # CI 容器里没有 PipeWire，依赖真实音频设备的测试会自行跳过
       # （见 is-audio 里的 require! 宏），纯逻辑测试照常跑。
+      - name: 测试
+        run: cargo test --workspace
+
+  # 交叉编译只能证明 Windows 代码编得过。known folder、GetDiskFreeSpaceExW、
+  # 字体查找这些只有在 Windows 上真跑一遍才算验证。
+  windows:
+    name: Windows 检查 / 测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 rust-toolchain.toml 钉住的工具链
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 装 ffmpeg
+        run: choco install ffmpeg -y --no-progress
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets
+
+      # 没有 WASAPI 后端之前，设备相关的测试会跳过；纯逻辑与平台 API
+      # （磁盘余量、路径、字体）照常跑。
       - name: 测试
         run: cargo test --workspace
 

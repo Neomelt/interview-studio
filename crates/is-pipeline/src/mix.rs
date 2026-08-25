@@ -249,9 +249,15 @@ mod tests {
         assert!(ok);
     }
 
+    // 本机没装工具时跳过是合理的；CI 里跳过不是。跳过和通过在测试日志里长得
+    // 一模一样，混音这条链会在没人察觉的情况下变成「从未验证」。
     macro_rules! need_ffmpeg {
         () => {
             if !probe::tools_available() {
+                assert!(
+                    std::env::var_os("CI").is_none(),
+                    "CI 里必须装好 ffmpeg/ffprobe，否则这条测试等于没跑"
+                );
                 eprintln!("跳过：本机没有 ffmpeg/ffprobe");
                 return;
             }
