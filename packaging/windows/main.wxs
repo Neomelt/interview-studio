@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  文件清单不写在这里，由 heat 从 dist/ 目录直接采集成 ComponentGroup "AppFiles"。
+  ffmpeg 的那堆 DLL 会随版本改名（avcodec-63.dll 之类），手写清单必然过期。
+
+  UpgradeCode 一旦发布就不能再改：它是「同一个产品」的身份，变了之后新版本
+  装上去不会替换旧版本，而是两个并存。
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Interview Studio"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Neomelt"
+           UpgradeCode="7B5F0C2E-2C9E-4E7A-9E9B-4B1D2A6C3F84">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Dual-track recorder for interviews and meetings" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Interview Studio is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="APPLICATIONFOLDER" Name="Interview Studio" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <!-- 快捷方式组件必须有 KeyPath，而 ProgramMenuFolder 下放不了文件，
+         所以按惯例拿一个 HKCU 注册表值当 KeyPath。 -->
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="9C1A4D77-5E3B-4A2F-8D61-0F7C9B2E5A13">
+        <Shortcut Id="AppShortcut"
+                  Name="Interview Studio"
+                  Description="Dual-track recording of your mic and the other side"
+                  Target="[APPLICATIONFOLDER]interview-studio.exe"
+                  WorkingDirectory="APPLICATIONFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\Neomelt\InterviewStudio"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Level="1" Title="Interview Studio">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <Icon Id="AppIcon" SourceFile="$(var.SourceDir)\interview-studio.exe" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Neomelt/interview-studio" />
+
+    <WixVariable Id="WixUILicenseRtf" Value="packaging\windows\license.rtf" />
+    <UIRef Id="WixUI_Minimal" />
+  </Product>
+</Wix>

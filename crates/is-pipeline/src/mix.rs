@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::probe::{self, Levels};
 use crate::{Error, MixReport, Result, TITLE_MIC, TITLE_MIX, TITLE_SYS};
@@ -30,7 +29,7 @@ pub fn mix_in_place(path: &Path) -> Result<MixReport> {
     let tmp = tmp_path(path);
     let _guard = Cleanup(tmp.clone());
 
-    let status = Command::new("ffmpeg")
+    let status = crate::tool::command("ffmpeg")
         .args(build_args(path, &tmp))
         .status()
         .map_err(|e| {
@@ -194,7 +193,7 @@ mod tests {
 
     // 满幅是故意的：两条相加必然削顶，用来验证限幅器真在干活
     fn synth_two_track(path: &Path, secs: u32) {
-        let ok = Command::new("ffmpeg")
+        let ok = crate::tool::command("ffmpeg")
             .args([
                 "-v",
                 "error",
@@ -228,7 +227,7 @@ mod tests {
     }
 
     fn synth_one_track(path: &Path) {
-        let ok = Command::new("ffmpeg")
+        let ok = crate::tool::command("ffmpeg")
             .args([
                 "-v",
                 "error",

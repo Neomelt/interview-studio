@@ -62,14 +62,40 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets
 
-      # 没有 WASAPI 后端之前，设备相关的测试会跳过；纯逻辑与平台 API
-      # （磁盘余量、路径、字体）照常跑。--nocapture 见上。
+      # runner 没有声卡，设备相关的测试会跳过；纯逻辑与平台 API（磁盘余量、
+      # known folder、字体、WASAPI 枚举器）照常跑。--nocapture 见上。
       - name: 测试
         run: cargo test --workspace -- --nocapture
 
+  # main.wxs 里的文件清单是 heat 采集的，但产品结构、快捷方式、升级码这些
+  # 是手写的，写错了要在打 tag 之前就知道，不是发布当天才发现。
+  windows-package:
+    name: Windows 打包冒烟
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 rust-toolchain.toml 钉住的工具链
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --bin interview-studio
+
+      - name: 准备 WiX v3
+        shell: pwsh
+        run: ./scripts/find-wix.ps1
+
+      - name: 打包
+        shell: pwsh
+        run: ./scripts/windows-package.ps1 -Version "0.0.0"
+
+      # 装进去的必须真是那几个文件。ZIP 里少一个 DLL，用户按下停止才会发现。
+      - name: 校验产物内容
+        shell: pwsh
+        run: ./scripts/verify-windows-package.ps1
+
   # 确认打包配置没坏。只在 CI 上验证能产出包，不上传——上传是 release 的事。
   package:
-    name: 打包冒烟
+    name: Linux 打包冒烟
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

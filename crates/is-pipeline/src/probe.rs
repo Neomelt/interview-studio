@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::Command;
 
 use crate::{Error, Result};
 
@@ -28,7 +27,7 @@ impl Levels {
 }
 
 fn run(bin: &str, args: &[String]) -> Result<std::process::Output> {
-    Command::new(bin).args(args).output().map_err(|e| {
+    crate::tool::command(bin).args(args).output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             Error::ToolMissing(bin.to_string())
         } else {
@@ -184,7 +183,7 @@ pub fn track_audio_md5(path: &Path, track: usize) -> Result<String> {
 
 pub fn tools_available() -> bool {
     ["ffmpeg", "ffprobe"].iter().all(|b| {
-        Command::new(b)
+        crate::tool::command(b)
             .arg("-version")
             .output()
             .map(|o| o.status.success())

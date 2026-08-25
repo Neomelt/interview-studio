@@ -6,6 +6,7 @@ pub mod meter;
 pub mod mix;
 pub mod probe;
 pub mod record;
+pub mod tool;
 
 use std::fmt;
 use std::path::PathBuf;

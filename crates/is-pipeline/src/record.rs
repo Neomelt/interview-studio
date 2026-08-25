@@ -101,7 +101,7 @@ fn verify_output(path: &Path, detail_when_missing: String) -> Result<PathBuf> {
 
 #[cfg(unix)]
 mod backend {
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Stdio};
     use std::time::Duration;
 
     use super::*;
@@ -131,7 +131,7 @@ mod backend {
                 &[Input::Pulse(cfg.mic.clone()), Input::Pulse(monitor.clone())],
                 &cfg.output,
             );
-            let child = Command::new("ffmpeg")
+            let child = crate::tool::command("ffmpeg")
                 .args(args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -194,7 +194,6 @@ mod backend {
 mod backend {
     use std::fs::File;
     use std::io::{BufWriter, Write};
-    use std::process::Command;
     use std::sync::{Arc, Mutex};
 
     use is_audio::wasapi::{Capture, CaptureFormat};
@@ -355,7 +354,7 @@ mod backend {
             // 但同一秒内重录会撞名，明确覆盖比让 ffmpeg 卡在交互提问上强。
             args.insert(0, "-y".into());
 
-            let status = Command::new("ffmpeg")
+            let status = crate::tool::command("ffmpeg")
                 .args(args)
                 .stdin(std::process::Stdio::null())
                 .status()
