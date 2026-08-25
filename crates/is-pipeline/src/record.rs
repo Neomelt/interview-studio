@@ -71,12 +71,9 @@ impl Recording {
         &self.path
     }
 
-    // 必须 SIGINT 而非 kill：ffmpeg 收到 SIGINT 才写完容器尾，SIGKILL 留下损坏文件
     pub fn stop(mut self) -> Result<PathBuf> {
         if self.is_alive() {
-            unsafe {
-                libc::kill(self.child.id() as libc::pid_t, libc::SIGINT);
-            }
+            request_graceful_stop(&mut self.child);
         }
         let status = self.child.wait()?;
 
@@ -94,6 +91,24 @@ impl Recording {
         }
         Ok(self.path.clone())
     }
+}
+
+// 必须 SIGINT 而非 kill：ffmpeg 收到 SIGINT 才写完容器尾，SIGKILL 留下损坏文件
+#[cfg(unix)]
+fn request_graceful_stop(child: &mut Child) {
+    // Safety: 只是给一个已知 pid 发信号，不解引用任何指针
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGINT);
+    }
+}
+
+// Windows 没有能发给子进程的 SIGINT，ffmpeg 又是以 stdin=null 起的，也没法写
+// 'q' 让它自己收尾。这条路径在 Windows 上不该被走到：ffmpeg 在 Windows 上没有
+// loopback 采集设备，录音由原生 WASAPI 后端负责，不起 ffmpeg 子进程。真被走到
+// 了，kill 会留下尾部不完整的容器——但比让 wait() 永远挂住强。
+#[cfg(windows)]
+fn request_graceful_stop(child: &mut Child) {
+    let _ = child.kill();
 }
 
 fn build_args(mic: &str, loopback: &str, out: &Path) -> Vec<String> {
@@ -161,16 +176,18 @@ mod tests {
 
     #[test]
     fn windows_backend_is_rejected_with_a_clear_message() {
+        let out = std::env::temp_dir().join("is-should-not-exist.mkv");
         let cfg = RecordConfig {
             mic: "m".into(),
             loopback: LoopbackSource::WasapiLoopback("dev".into()),
-            output: "/tmp/should-not-exist.mkv".into(),
+            output: out.clone(),
         };
         match Recording::start(&cfg) {
             Err(Error::ToolMissing(m)) => assert!(m.contains("Windows"), "{m}"),
             other => panic!("应当明确拒绝: {other:?}"),
         }
-        assert!(!Path::new("/tmp/should-not-exist.mkv").exists());
+        // 拒绝要发生在建目录/起进程之前，不能留下半个文件
+        assert!(!out.exists(), "{out:?}");
     }
 }
 

@@ -25,6 +25,7 @@ pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+#[cfg(unix)]
 fn find_cjk() -> Option<(String, u32)> {
     let out = std::process::Command::new("fc-match")
         .args(["-f", "%{file}\t%{index}", "Noto Sans CJK SC"])
@@ -38,6 +39,20 @@ fn find_cjk() -> Option<(String, u32)> {
     // fontconfig 把可变字体的命名实例号编在高 16 位，ab_glyph 只认低 16 位
     let raw: u32 = index.trim().parse().unwrap_or(0);
     Some((file.to_string(), raw & 0xFFFF))
+}
+
+// Windows 没有 fontconfig，只能按名字在系统字体目录里挨个试。微软雅黑是简中
+// 界面的默认字体、Vista 起随所有 SKU 分发，找不到它才轮到后面两个老字体。
+// TTC 里第 0 个 face 就是 Regular，不需要 fontconfig 那套索引换算。
+#[cfg(windows)]
+fn find_cjk() -> Option<(String, u32)> {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let dir = std::path::Path::new(&root).join("Fonts");
+    ["msyh.ttc", "msyh.ttf", "simhei.ttf", "simsun.ttc"]
+        .into_iter()
+        .map(|name| dir.join(name))
+        .find(|p| p.is_file())
+        .map(|p| (p.to_string_lossy().into_owned(), 0))
 }
 
 // 索引越界 egui 会 panic，先按 TTC 头里的 numFonts 夹一下

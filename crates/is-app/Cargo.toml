@@ -14,6 +14,16 @@ is-audio.workspace = true
 is-pipeline.workspace = true
 eframe = "0.35"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# 录音文件名要带本地时间戳。std 只给得出 UTC，本地偏移需要时区库；
+# 原先靠 `date` 子进程，Windows 上没有这个可执行文件。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+# 「音乐」目录用户可以搬走，不能拼 %USERPROFILE%\Music 了事，得问 known folder。
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+] }
 
 [dev-dependencies]
 ab_glyph = "0.2"

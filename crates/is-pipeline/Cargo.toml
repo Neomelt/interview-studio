@@ -7,4 +7,11 @@ license.workspace = true
 
 [dependencies]
 is-audio.workspace = true
+
+# libc 在 Windows 上能编，但 statvfs / kill 不存在，所以按平台分开声明，
+# 让「用错了平台的 API」在解析依赖时就暴露，而不是编到一半报符号找不到。
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
