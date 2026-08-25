@@ -257,16 +257,17 @@ mod backend {
             self.capture.is_running() && self.trouble().is_none()
         }
 
-        // 先停采集线程（Drop 里 join），再冲盘，顺序反了会丢掉最后一段
         fn finish(self) -> Result<(PathBuf, CaptureFormat)> {
             let fmt = self.capture.format();
-            let trouble = self.trouble();
-            drop(self.capture);
+            // 停采集线程要在冲盘之前，否则最后一段还在缓冲里就被关掉了；
+            // 而失败原因要在 join 之后再读，收尾时报的错才不会漏。
+            let capture_error = self.capture.stop();
             if let Some(w) = self.sink.lock().unwrap().take() {
                 w.into_inner()
                     .map_err(|e| Error::Io(e.into()))?
                     .sync_all()?;
             }
+            let trouble = capture_error.or_else(|| self.write_error.lock().unwrap().clone());
             match trouble {
                 Some(detail) => Err(Error::Tool {
                     what: "录音".into(),
@@ -327,9 +328,15 @@ mod backend {
         pub fn stop(mut self) -> Result<PathBuf> {
             let mic = self.mic.take().expect("stop 只会被调用一次").finish();
             let sys = self.sys.take().expect("stop 只会被调用一次").finish();
-            let out = self.encode(mic?, sys?);
+            // 用 `?` 提前返回会跳过清理，而 Drop 那条兜底路径此时 mic/sys
+            // 都已经是 None 了也不会清——一小时的录音就是一 GB 裸 PCM 留在
+            // 用户的音乐目录里。所以先算结果，无论成败都清。
+            let result = match (mic, sys) {
+                (Ok(m), Ok(s)) => self.encode(m, s),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            };
             let _ = std::fs::remove_dir_all(&self.scratch);
-            out
+            result
         }
 
         fn encode(

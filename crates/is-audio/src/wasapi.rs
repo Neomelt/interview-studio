@@ -283,6 +283,16 @@ impl Capture {
     pub fn is_running(&self) -> bool {
         self.join.as_ref().is_some_and(|j| !j.is_finished())
     }
+
+    /// 停下采集并等线程退出，返回它中途出的错。必须先 join 再读——线程完全
+    /// 可能正好在收尾那一下报错，先读就漏掉了，调用方会以为一切正常。
+    pub fn stop(mut self) -> Option<String> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+        self.failure.lock().unwrap().clone()
+    }
 }
 
 impl Drop for Capture {

@@ -113,6 +113,13 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      # checkout 要在下载产物之前：它默认会清空工作区，放在后面会把刚下下来的
+      # 产物一起删掉。这里只需要仓库里的 release-notes.md。
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging/release-notes.md
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v4
         with:
           path: staged
@@ -129,6 +136,7 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          body_path: packaging/release-notes.md
           # 直接发布。把关放在 guard job（隐私扫描 + 测试）和「打 tag」这个
           # 动作本身上——tag 是有意为之的，不需要再加一道人工点击。
           draft: false
