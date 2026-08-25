@@ -76,7 +76,9 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
-          draft: true # 先出草稿，人工看一眼再点发布
+          # 直接发布。把关放在 guard job（隐私扫描 + 测试）和「打 tag」这个
+          # 动作本身上——tag 是有意为之的，不需要再加一道人工点击。
+          draft: false
 
   # Windows 后端还没实现。等 is-audio 有了 WASAPI 实现，
   # 把下面这个 job 打开即可，流水线其余部分不用动。
