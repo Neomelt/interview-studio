@@ -89,6 +89,16 @@ mod tests {
         assert_eq!(d.parent().unwrap(), music_dir());
     }
 
+    // 上面那条在 known folder 查询失败时也会通过——会退回 %USERPROFILE%\Music，
+    // 一样是绝对路径。区分不出这段 unsafe FFI 到底有没有在干活，单独断言一次。
+    #[cfg(windows)]
+    #[test]
+    fn known_folder_lookup_actually_works() {
+        let p = known_folder_music().expect("SHGetKnownFolderPath(FOLDERID_Music) 应当成功");
+        assert!(p.is_absolute(), "{p:?}");
+        eprintln!("known folder Music = {}", p.display());
+    }
+
     #[test]
     fn filename_is_timestamped_mkv() {
         let n = filename_for_now();

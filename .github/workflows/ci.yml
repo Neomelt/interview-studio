@@ -41,8 +41,9 @@ jobs:
 
       # CI 容器里没有 PipeWire，依赖真实音频设备的测试会自行跳过
       # （见 is-audio 里的 require! 宏），纯逻辑测试照常跑。
+      # --nocapture：跳过和通过在默认输出里长得一样，让「跳过」在日志里现形。
       - name: 测试
-        run: cargo test --workspace
+        run: cargo test --workspace -- --nocapture
 
   # 交叉编译只能证明 Windows 代码编得过。known folder、GetDiskFreeSpaceExW、
   # 字体查找这些只有在 Windows 上真跑一遍才算验证。
@@ -62,9 +63,9 @@ jobs:
         run: cargo clippy --workspace --all-targets
 
       # 没有 WASAPI 后端之前，设备相关的测试会跳过；纯逻辑与平台 API
-      # （磁盘余量、路径、字体）照常跑。
+      # （磁盘余量、路径、字体）照常跑。--nocapture 见上。
       - name: 测试
-        run: cargo test --workspace
+        run: cargo test --workspace -- --nocapture
 
   # 确认打包配置没坏。只在 CI 上验证能产出包，不上传——上传是 release 的事。
   package:

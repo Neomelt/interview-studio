@@ -84,11 +84,15 @@ mod tests {
         assert_eq!(clamp_face_index(b"tt", 1), 0);
     }
 
+    // 找不到就跳过，但要在日志里说出来：找不到中文字体的后果是界面全是豆腐块，
+    // 而这条测试静默通过时看不出发生了哪一种。
     #[test]
     fn real_system_font_parses() {
         let Some((path, index)) = find_cjk() else {
+            eprintln!("跳过：本机找不到中文字体，界面会退回英文字形");
             return;
         };
+        eprintln!("命中字体 {path}（face {index}）");
         let bytes = std::fs::read(&path).expect("读字体");
         let idx = clamp_face_index(&bytes, index);
         assert!(ab_glyph::FontVec::try_from_vec_and_index(bytes, idx).is_ok());
