@@ -60,7 +60,10 @@ Write-Host "==> MSI"
     -out "$OutDir\files.wxs"
 if ($LASTEXITCODE -ne 0) { throw "heat 失败" }
 
-& $env:WIX_CANDLE -nologo "-dVersion=$Version" "-dSourceDir=$staging" `
+# -arch x64 不能省：heat 产出的组件不带 Win64 属性，由 candle 的 arch 决定。
+# 默认是 x86，而 APPLICATIONFOLDER 挂在 ProgramFiles64Folder 下，
+# light 会以 ICE80（32 位组件用了 64 位目录）拒绝。
+& $env:WIX_CANDLE -nologo -arch x64 "-dVersion=$Version" "-dSourceDir=$staging" `
     -out "$OutDir\" "packaging\windows\main.wxs" "$OutDir\files.wxs"
 if ($LASTEXITCODE -ne 0) { throw "candle 失败" }
 
