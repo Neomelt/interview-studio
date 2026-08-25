@@ -133,29 +133,19 @@ impl App {
 
         match resolved {
             Ok((devices, routing)) => {
-                // 设备与路由检查在两个平台上都成立，先落盘；电平表另说。
-                match &devices.loopback {
-                    LoopbackSource::PulseMonitor(sys_src) => {
-                        match (Meter::start(&devices.mic.id), Meter::start(sys_src)) {
-                            (Ok(mic), Ok(sys)) => {
-                                self.meters = Some(Meters {
-                                    mic,
-                                    sys,
-                                    mic_silent_since: None,
-                                    sys_silent_since: None,
-                                });
-                            }
-                            (Err(e), _) | (_, Err(e)) => {
-                                self.error = Some(format!("电平表起不来: {e}"))
-                            }
-                        }
+                match (
+                    Meter::mic(&devices.mic.id),
+                    Meter::system(&devices.loopback),
+                ) {
+                    (Ok(mic), Ok(sys)) => {
+                        self.meters = Some(Meters {
+                            mic,
+                            sys,
+                            mic_silent_since: None,
+                            sys_silent_since: None,
+                        });
                     }
-                    // parec 是 PulseAudio 的工具，Windows 上没有对应物，电平要
-                    // 由原生采集顺带算出来。那部分还没实现。
-                    LoopbackSource::WasapiLoopback(_) => {
-                        self.error =
-                            Some("Windows 的电平表还没实现，设备与路由检查照常可用".into());
-                    }
+                    (Err(e), _) | (_, Err(e)) => self.error = Some(format!("电平表起不来: {e}")),
                 }
                 self.devices = Some(devices);
                 self.routing = Some(routing);

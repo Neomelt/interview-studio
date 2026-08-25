@@ -1,96 +1,21 @@
-// 独立进程读电平，不挂在录音的 ffmpeg 上：同进程方案里电平走 FIFO，读端一消失
-// ffmpeg 就阻塞在写入上，进程还活着但录音停了。已验证一个源可被多进程并发读。
+// 电平表和录音是两条独立的采集：同进程方案里电平走 FIFO，读端一消失 ffmpeg
+// 就阻塞在写入上，进程还活着但录音停了。两个平台都已确认一个源可被多个客户端
+// 并发采集（Linux 是多进程读 monitor，Windows 是共享模式多客户端）。
 
-use std::io::Read;
-use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::{Error, Result};
+use is_audio::LoopbackSource;
 
+use crate::Result;
+
+// parec 会替我们重采样到这个速率；Windows 那边直接用设备速率，不需要这两个常量。
+#[cfg(unix)]
 const RATE: u32 = 16_000;
+#[cfg(unix)]
 const WINDOW_SAMPLES: usize = (RATE as usize) / 10;
 
 pub const FLOOR_DB: f32 = -90.0;
-
-pub struct Meter {
-    child: Child,
-    level: Arc<AtomicI32>,
-    stop: Arc<AtomicBool>,
-}
-
-impl Meter {
-    pub fn start(source: &str) -> Result<Self> {
-        let mut child = Command::new("parec")
-            .args([
-                "--rate",
-                &RATE.to_string(),
-                "--channels=1",
-                "--format=s16le",
-                "--raw",
-                "--latency-msec=50",
-                "--device",
-                source,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Error::ToolMissing("parec（在 pulseaudio-utils 包里）".into())
-                } else {
-                    Error::Io(e)
-                }
-            })?;
-
-        let mut stdout = child.stdout.take().ok_or_else(|| Error::Tool {
-            what: "parec".into(),
-            detail: "拿不到 stdout".into(),
-        })?;
-
-        let level = Arc::new(AtomicI32::new(db_to_raw(FLOOR_DB)));
-        let stop = Arc::new(AtomicBool::new(false));
-        let (l, s) = (Arc::clone(&level), Arc::clone(&stop));
-
-        std::thread::Builder::new()
-            .name(format!("meter:{source}"))
-            .spawn(move || {
-                let mut buf = vec![0u8; WINDOW_SAMPLES * 2];
-                let mut samples = vec![0i16; WINDOW_SAMPLES];
-                while !s.load(Ordering::Relaxed) {
-                    // 不足一整窗就不算，避免短读导致电平乱跳
-                    if stdout.read_exact(&mut buf).is_err() {
-                        break;
-                    }
-                    for (i, c) in buf.as_chunks::<2>().0.iter().enumerate() {
-                        samples[i] = i16::from_le_bytes(*c);
-                    }
-                    l.store(db_to_raw(rms_dbfs(&samples)), Ordering::Relaxed);
-                }
-                l.store(db_to_raw(FLOOR_DB), Ordering::Relaxed);
-            })
-            .map_err(Error::Io)?;
-
-        Ok(Self { child, level, stop })
-    }
-
-    pub fn level_db(&self) -> f32 {
-        raw_to_db(self.level.load(Ordering::Relaxed))
-    }
-
-    pub fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-}
-
-impl Drop for Meter {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 pub fn rms_dbfs(samples: &[i16]) -> f32 {
     if samples.is_empty() {
@@ -113,6 +38,182 @@ fn db_to_raw(db: f32) -> i32 {
 
 fn raw_to_db(raw: i32) -> f32 {
     raw as f32 / 100.0
+}
+
+// ---- Linux：parec 子进程 ----
+
+#[cfg(unix)]
+mod backend {
+    use std::io::Read;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+    use crate::Error;
+
+    pub struct Meter {
+        child: Child,
+        level: Arc<AtomicI32>,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Meter {
+        pub fn open(source: &str) -> Result<Self> {
+            let mut child = Command::new("parec")
+                .args([
+                    "--rate",
+                    &RATE.to_string(),
+                    "--channels=1",
+                    "--format=s16le",
+                    "--raw",
+                    "--latency-msec=50",
+                    "--device",
+                    source,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        Error::ToolMissing("parec（在 pulseaudio-utils 包里）".into())
+                    } else {
+                        Error::Io(e)
+                    }
+                })?;
+
+            let mut stdout = child.stdout.take().ok_or_else(|| Error::Tool {
+                what: "parec".into(),
+                detail: "拿不到 stdout".into(),
+            })?;
+
+            let level = Arc::new(AtomicI32::new(db_to_raw(FLOOR_DB)));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (l, s) = (Arc::clone(&level), Arc::clone(&stop));
+
+            std::thread::Builder::new()
+                .name(format!("meter:{source}"))
+                .spawn(move || {
+                    let mut buf = vec![0u8; WINDOW_SAMPLES * 2];
+                    let mut samples = vec![0i16; WINDOW_SAMPLES];
+                    while !s.load(Ordering::Relaxed) {
+                        // 不足一整窗就不算，避免短读导致电平乱跳
+                        if stdout.read_exact(&mut buf).is_err() {
+                            break;
+                        }
+                        for (i, c) in buf.as_chunks::<2>().0.iter().enumerate() {
+                            samples[i] = i16::from_le_bytes(*c);
+                        }
+                        l.store(db_to_raw(rms_dbfs(&samples)), Ordering::Relaxed);
+                    }
+                    l.store(db_to_raw(FLOOR_DB), Ordering::Relaxed);
+                })
+                .map_err(Error::Io)?;
+
+            Ok(Self { child, level, stop })
+        }
+
+        pub fn level_db(&self) -> f32 {
+            raw_to_db(self.level.load(Ordering::Relaxed))
+        }
+
+        pub fn is_alive(&mut self) -> bool {
+            matches!(self.child.try_wait(), Ok(None))
+        }
+    }
+
+    impl Drop for Meter {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+// ---- Windows：WASAPI 共享模式采集 ----
+
+#[cfg(windows)]
+mod backend {
+    use is_audio::wasapi::Capture;
+
+    use super::*;
+    use crate::Error;
+
+    pub struct Meter {
+        capture: Capture,
+        level: Arc<AtomicI32>,
+    }
+
+    impl Meter {
+        pub fn open(endpoint_id: &str, loopback: bool) -> Result<Self> {
+            let level = Arc::new(AtomicI32::new(db_to_raw(FLOOR_DB)));
+            let l = Arc::clone(&level);
+
+            let capture = Capture::start(endpoint_id, loopback, move |fmt| {
+                // 攒够 100ms 再算，和 parec 那条路径的时间常数保持一致。
+                // 窗口按设备实际速率算，不强行重采样。
+                let target = (fmt.rate as usize / 10).max(1) * fmt.channels.max(1) as usize;
+                let mut window: Vec<i16> = Vec::new();
+                move |frames: &[i16]| {
+                    window.extend_from_slice(frames);
+                    while window.len() >= target {
+                        l.store(db_to_raw(rms_dbfs(&window[..target])), Ordering::Relaxed);
+                        window.drain(..target);
+                    }
+                }
+            })
+            .map_err(|e| Error::Tool {
+                what: "WASAPI 电平采集".into(),
+                detail: e.to_string(),
+            })?;
+
+            Ok(Self { capture, level })
+        }
+
+        pub fn level_db(&self) -> f32 {
+            raw_to_db(self.level.load(Ordering::Relaxed))
+        }
+
+        pub fn is_alive(&mut self) -> bool {
+            self.capture.is_running() && self.capture.failure().is_none()
+        }
+    }
+}
+
+pub struct Meter(backend::Meter);
+
+impl Meter {
+    /// 麦克风：直接采这个输入端点。
+    pub fn mic(device_id: &str) -> Result<Self> {
+        #[cfg(unix)]
+        return Ok(Self(backend::Meter::open(device_id)?));
+        #[cfg(windows)]
+        return Ok(Self(backend::Meter::open(device_id, false)?));
+    }
+
+    /// 系统输出：Linux 采 sink 的 monitor 源，Windows 对渲染端点做环回采集。
+    /// 分成两个入口而不是一个字符串，是因为 Windows 上「采哪个设备」和
+    /// 「要不要环回」是两件事，光看名字分不出来。
+    pub fn system(loopback: &LoopbackSource) -> Result<Self> {
+        match loopback {
+            #[cfg(unix)]
+            LoopbackSource::PulseMonitor(name) => Ok(Self(backend::Meter::open(name)?)),
+            #[cfg(windows)]
+            LoopbackSource::WasapiLoopback(id) => Ok(Self(backend::Meter::open(id, true)?)),
+            other => Err(crate::Error::ToolMissing(format!(
+                "这个平台起不了 {other:?} 的电平表"
+            ))),
+        }
+    }
+
+    pub fn level_db(&self) -> f32 {
+        self.0.level_db()
+    }
+
+    pub fn is_alive(&mut self) -> bool {
+        self.0.is_alive()
+    }
 }
 
 #[cfg(test)]
@@ -161,8 +262,20 @@ mod tests {
         }
     }
 
+    // 另一个平台的 loopback 变体要被明确拒绝，而不是静默起一个测不到声音的表
+    #[test]
+    fn foreign_loopback_variant_is_rejected() {
+        #[cfg(unix)]
+        let foreign = LoopbackSource::WasapiLoopback("dev".into());
+        #[cfg(windows)]
+        let foreign = LoopbackSource::PulseMonitor("x.monitor".into());
+        assert!(Meter::system(&foreign).is_err());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn starts_on_a_real_source() {
+        use std::process::Command;
         let Ok(out) = Command::new("pactl").arg("info").output() else {
             eprintln!("跳过：没有 pactl");
             return;
@@ -177,7 +290,7 @@ mod tests {
         });
         let Some(sink) = sink else { return };
 
-        match Meter::start(&format!("{sink}.monitor")) {
+        match Meter::system(&LoopbackSource::PulseMonitor(format!("{sink}.monitor"))) {
             Ok(mut m) => {
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 assert!(m.is_alive(), "parec 立刻退出了");
@@ -185,15 +298,36 @@ mod tests {
                 assert!((FLOOR_DB..=0.5).contains(&db), "电平超出合理范围: {db}");
                 eprintln!("实测电平 {db:.1} dBFS");
             }
-            Err(Error::ToolMissing(_)) => eprintln!("跳过：没装 parec"),
+            Err(crate::Error::ToolMissing(_)) => eprintln!("跳过：没装 parec"),
             Err(e) => panic!("{e}"),
         }
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn starts_on_a_real_endpoint() {
+        use is_audio::Backend;
+        let Ok(b) = is_audio::wasapi::WasapiBackend::new() else {
+            eprintln!("跳过：拿不到 WASAPI 枚举器");
+            return;
+        };
+        let Ok(sink) = b.default_sink() else {
+            eprintln!("跳过：本机没有默认输出端点");
+            return;
+        };
+        let mut m = Meter::system(&b.loopback_source(&sink).expect("环回源")).expect("起电平表");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert!(m.is_alive(), "采集线程立刻退出了");
+        let db = m.level_db();
+        assert!((FLOOR_DB..=0.5).contains(&db), "电平超出合理范围: {db}");
+        eprintln!("实测电平 {db:.1} dBFS");
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod live_tests {
     use super::*;
+    use std::process::Command;
     use std::time::Duration;
 
     #[test]
@@ -210,7 +344,8 @@ mod live_tests {
             })
             .expect("默认输出");
 
-        let mut meter = Meter::start(&format!("{sink}.monitor")).expect("起电平表");
+        let mut meter = Meter::system(&LoopbackSource::PulseMonitor(format!("{sink}.monitor")))
+            .expect("起电平表");
         std::thread::sleep(Duration::from_millis(300));
         let quiet = meter.level_db();
 
