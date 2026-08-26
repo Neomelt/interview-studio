@@ -88,9 +88,14 @@ pub fn mix_in_place(path: &Path) -> Result<MixReport> {
 /// amix 是两路满增益直加，一方比另一方响 20 dB 时，混音轨就只听得见响的那个
 /// ——而这条轨存在的唯一理由是「双击一下能同时听见两个人」。原始双轨不受影响。
 ///
-/// 只压不抬：抬高安静的那条会把它的底噪一起抬上来，而底噪往往正是它安静的
-/// 原因。压完整体变小，再给两条同样的补偿增益推回去；补偿是共同的，不改变
-/// 两者的相对关系。
+/// 拉平的方式是压响的那条，不是抬安静的那条：抬会把底噪一起抬上来，而底噪
+/// 往往正是它安静的原因。压完整体变小，再给两条**同样的**补偿增益推回去——
+/// 补偿是共同的，不改变两者的相对关系，但安静那条净效果确实是被抬了，所以
+/// 补偿有上限（MAX_MAKEUP_DB）。
+///
+/// 典型值：音乐 -12 dB / 说话 -30 dB → (说话 +7.5, 音乐 -4.5)，混音峰值约 -3 dB。
+/// 差得再多就会撞上压制和补偿的两个上限，混音会偏小——那时候问题已经不是
+/// 配平能解决的了。
 fn balance(mic: Levels, sys: Levels) -> (f32, f32) {
     // 有一条全程静音就不动：那条轨没内容，压另一条只会让整个混音白白变小
     if mic.is_silent() || sys.is_silent() {
@@ -283,6 +288,41 @@ mod tests {
         assert!(ok, "造素材失败");
     }
 
+    // 一响一弱，复现用户实测的场景：放着音乐说话
+    fn synth_unbalanced(path: &Path, quiet_db: i32) {
+        let ok = crate::tool::command("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("sine=frequency=440:duration=2,volume={quiet_db}dB"),
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=660:duration=2",
+                "-map",
+                "0:a",
+                "-map",
+                "1:a",
+                "-c:a",
+                "flac",
+                "-sample_fmt",
+                "s16",
+                "-metadata:s:a:0",
+                &format!("title={TITLE_MIC}"),
+                "-metadata:s:a:1",
+                &format!("title={TITLE_SYS}"),
+                &path.to_string_lossy(),
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "造素材失败");
+    }
+
     fn synth_one_track(path: &Path) {
         let ok = crate::tool::command("ffmpeg")
             .args([
@@ -397,6 +437,40 @@ mod tests {
         // 配平只作用在混音轨上，原始两轨仍然是 copy
         assert!(joined.contains("-c:a:1 copy"), "{joined}");
         assert!(joined.contains("-c:a:2 copy"), "{joined}");
+    }
+
+    // 端到端：单元测试只证明增益算得对，证不了滤镜图 ffmpeg 认不认。
+    #[test]
+    fn unbalanced_pair_is_balanced_end_to_end() {
+        need_ffmpeg!();
+        let s = Scratch::new("balance");
+        let f = s.file("a.mkv");
+        synth_unbalanced(&f, -30);
+
+        let before = (
+            probe::track_levels(&f, 0).unwrap(),
+            probe::track_levels(&f, 1).unwrap(),
+        );
+        let gap_before = (before.0.mean_db - before.1.mean_db).abs();
+        assert!(
+            gap_before > 20.0,
+            "素材本身就该是失衡的：{gap_before:.1} dB"
+        );
+
+        let r = mix_in_place(&f).expect("混音");
+        assert!(!r.skipped);
+        let (gm, gs) = r.balance_db;
+        assert!(gs < gm - 1.0, "响的那条应当被压下来：gm={gm:.1} gs={gs:.1}");
+
+        // 原始两轨仍然一字未改（verify 里逐采样比过 MD5，能走到这里就说明过了），
+        // 混音轨没削顶，轨序和标题也没乱
+        assert_eq!(probe::audio_track_count(&f).unwrap(), 3);
+        assert_eq!(probe::track_titles(&f).unwrap()[0], TITLE_MIX);
+        assert!(r.mix_peak_db <= -0.5, "混音削顶了: {}", r.mix_peak_db);
+        eprintln!(
+            "失衡 {gap_before:.0} dB -> 配平 (我 {gm:+.1}, 对方 {gs:+.1}) dB，混音峰值 {:.1} dB",
+            r.mix_peak_db
+        );
     }
 
     #[test]

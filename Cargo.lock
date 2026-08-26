@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "is-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ab_glyph",
  "chrono",
@@ -1601,14 +1601,14 @@ dependencies = [
 
 [[package]]
 name = "is-audio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "is-pipeline"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "is-audio",
  "libc",

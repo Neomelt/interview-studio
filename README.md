@@ -69,6 +69,14 @@ Recordings land in `<your music folder>/InterviewStudio/`, named by timestamp.
 3. Watch both meters move; that is your proof both sides are being captured
 4. Record, then stop; the mixed track is added automatically
 
+**Use headphones.** On speakers, your microphone also picks up the other side,
+so the two tracks stop being independent and the whole point is lost. This is
+the one thing that silently degrades the recording without any error showing up.
+
+The mixed track (track 1) is a convenience for double-clicking. Track 2 and
+track 3 are the untouched microphone and system recordings — those are what you
+feed to a transcriber, and what to listen to if the mix sounds off.
+
 ## Why two tracks
 
 Most "record the meeting" setups capture only the microphone, so the other
@@ -109,6 +117,19 @@ while the render endpoint is idle, rather than emitting silence. Silence has to
 be reconstructed from the capture timestamps, otherwise quiet stretches are
 dropped, the track gets shorter, and the two tracks drift apart.
 
+## How the mixed track is balanced
+
+Summing both sides at full gain means a loud side buries a quiet one — music at
+-12 dBFS against speech at -30 dBFS leaves the speech inaudible, which defeats
+the only reason that track exists. So before mixing, both tracks are measured
+and the louder one is turned down until the gap is within 6 dB (never more than
+18 dB of cut), then a shared make-up gain (at most 12 dB) brings the level back
+up. Turning the loud side down rather than the quiet side up avoids amplifying
+the noise floor that usually made it quiet in the first place.
+
+The two original tracks are copied without re-encoding and are verified
+sample-for-sample against the source, so nothing here touches them.
+
 ## Verification status
 
 | | Linux | Windows |
@@ -144,7 +165,7 @@ cargo generate-rpm -p crates/is-app
 # Windows (needs the WiX v3 toolset)
 cargo build --release --bin interview-studio
 ./scripts/find-wix.ps1
-./scripts/windows-package.ps1 -Version 0.2.0
+./scripts/windows-package.ps1 -Version 0.2.1
 ```
 
 ## Layout

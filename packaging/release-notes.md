@@ -1,29 +1,33 @@
-## Windows support
+Fixes for everything that turned up on the first real Windows run.
 
-Recording, live meters, device enumeration and the routing preflight now work on
-Windows, via WASAPI. Capture is native — FFmpeg has no loopback capture device on
-Windows — but encoding and muxing still go through the same `ffmpeg`, so the
-output file has the same shape on both platforms.
+### Windows
 
-`.msi` and portable `.zip` both bundle `ffmpeg.exe` / `ffprobe.exe`
-([LGPL builds](https://github.com/BtbN/FFmpeg-Builds), licence included), so
-there is nothing else to install.
+- **No more console window.** The app was built for the console subsystem, so
+  double-clicking it opened a black box alongside the window. Its FFmpeg
+  subprocesses would have flashed their own console windows too — a dozen per
+  recording — so those are now created without one.
+- **Real application icon**, embedded in the executable, so the taskbar, Alt-Tab
+  and Explorer show it. The runtime icon only ever applied to the window itself.
+- **The installer now asks.** You can choose the install location, and start
+  menu and desktop shortcuts are separate options you can decline. Previously
+  there was no shortcut at all and the app could only be launched by searching
+  for it. The installer UI is also in Chinese now.
 
-### What is verified, and what is not
+### Both platforms
 
-CI builds, lints and tests both platforms, and on Windows it checks that the
-bundled FFmpeg actually runs and produces a dual-track MKV from two raw PCM
-streams — exactly what stopping a recording does.
+- **The mixed track is balanced.** It used to be a straight full-gain sum of both
+  sides, so a loud side buried a quiet one — playing music while talking left the
+  speech inaudible in the default track. The louder side is now turned down until
+  the two are within 6 dB, followed by a shared make-up gain. The two original
+  tracks are untouched and still verified sample-for-sample.
 
-CI runners have **no sound card**, so on Windows the following have not been
-exercised against real audio hardware yet:
+If a recording still sounds like one side is missing, check the two original
+tracks (2 and 3) rather than the mix, and use headphones — on speakers the
+microphone picks up the other side as well, which is a recording-setup problem
+no amount of mixing can undo.
 
-- device enumeration and the routing preflight
-- WASAPI capture (microphone and system loopback)
-- record → stop → mix, end to end
+### Still not verified on real hardware
 
-Those paths are covered by unit tests for their pure logic (silence
-reconstruction, sample conversion, argument construction) and by tests that skip
-themselves when no device is present. Please report what happens on your machine.
-
-Linux is unchanged and its end-to-end recording test still passes.
+WASAPI capture and the routing preflight are exercised by unit tests and by CI,
+but CI runners have no sound card, so a real end-to-end recording on Windows is
+still down to you. The 0.2.0 notes have the details.
