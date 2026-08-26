@@ -18,6 +18,11 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # 原先靠 `date` 子进程，Windows 上没有这个可执行文件。
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# cfg(windows) 在 build-dependencies 上按宿主平台判断，正是这里要的语义：
+# 只有在 Windows 上构建时才需要资源编译器。
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [target.'cfg(windows)'.dependencies]
 # 「音乐」目录用户可以搬走，不能拼 %USERPROFILE%\Music 了事，得问 known folder。
 windows-sys = { version = "0.61", features = [

@@ -9,14 +9,26 @@ const LIMIT_LINEAR: &str = "0.891";
 
 const DURATION_TOLERANCE: f64 = 2.0;
 
+// 配平参数。差在容差以内就不动——两个人音量本来就不会完全一样，
+// 强行拉平反而不自然。
+const BALANCE_TOLERANCE_DB: f32 = 6.0;
+const MAX_ATTENUATION_DB: f32 = 18.0;
+// 压完整体会变小，用一个共同的补偿增益把预测峰值推回接近满幅。
+const MAKEUP_TARGET_PEAK_DB: f32 = -3.0;
+const MAX_MAKEUP_DB: f32 = 12.0;
+
 // 播放器默认只播第一条轨（原来是麦克风），所以双击只听得到自己。
 // 录完再混而不是实时混：录音这条路径不能失败，合成挂了原件还在。
 pub fn mix_in_place(path: &Path) -> Result<MixReport> {
     let tracks = probe::audio_track_count(path)?;
     if tracks == 3 {
+        // 已经混过了：轨序是 [混音, 我, 对方]
         return Ok(MixReport {
             path: path.to_path_buf(),
             mix_peak_db: probe::track_levels(path, 0)?.peak_db,
+            mic: probe::track_levels(path, 1)?,
+            sys: probe::track_levels(path, 2)?,
+            balance_db: (0.0, 0.0),
             skipped: true,
         });
     }
@@ -26,11 +38,16 @@ pub fn mix_in_place(path: &Path) -> Result<MixReport> {
         )));
     }
 
+    // 必须在混音之前量：混完轨号整体后移一位，再量就量错对象了
+    let mic = probe::track_levels(path, 0)?;
+    let sys = probe::track_levels(path, 1)?;
+    let balance_db = balance(mic, sys);
+
     let tmp = tmp_path(path);
     let _guard = Cleanup(tmp.clone());
 
     let status = crate::tool::command("ffmpeg")
-        .args(build_args(path, &tmp))
+        .args(build_args(path, &tmp, balance_db))
         .status()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -59,13 +76,53 @@ pub fn mix_in_place(path: &Path) -> Result<MixReport> {
     Ok(MixReport {
         path: path.to_path_buf(),
         mix_peak_db: levels.peak_db,
+        mic,
+        sys,
+        balance_db,
         skipped: false,
     })
 }
 
-fn build_args(input: &Path, output: &Path) -> Vec<String> {
+/// 混音轨的配平。
+///
+/// amix 是两路满增益直加，一方比另一方响 20 dB 时，混音轨就只听得见响的那个
+/// ——而这条轨存在的唯一理由是「双击一下能同时听见两个人」。原始双轨不受影响。
+///
+/// 只压不抬：抬高安静的那条会把它的底噪一起抬上来，而底噪往往正是它安静的
+/// 原因。压完整体变小，再给两条同样的补偿增益推回去；补偿是共同的，不改变
+/// 两者的相对关系。
+fn balance(mic: Levels, sys: Levels) -> (f32, f32) {
+    // 有一条全程静音就不动：那条轨没内容，压另一条只会让整个混音白白变小
+    if mic.is_silent() || sys.is_silent() {
+        return (0.0, 0.0);
+    }
+
+    let gap = mic.mean_db - sys.mean_db;
+    let cut = if gap.abs() <= BALANCE_TOLERANCE_DB {
+        0.0
+    } else {
+        (gap.abs() - BALANCE_TOLERANCE_DB).min(MAX_ATTENUATION_DB)
+    };
+    let (mut gm, mut gs) = if gap > 0.0 { (-cut, 0.0) } else { (0.0, -cut) };
+
+    // 两路相加的峰值上界就是各自峰值的线性和，据此算补偿。多出来的部分
+    // 由 alimiter 兜住，所以宁可估得保守。
+    let predicted = sum_db(mic.peak_db + gm, sys.peak_db + gs);
+    let makeup = (MAKEUP_TARGET_PEAK_DB - predicted).clamp(0.0, MAX_MAKEUP_DB);
+    gm += makeup;
+    gs += makeup;
+    (gm, gs)
+}
+
+fn sum_db(a: f32, b: f32) -> f32 {
+    let lin = 10f32.powf(a / 20.0) + 10f32.powf(b / 20.0);
+    20.0 * lin.log10()
+}
+
+fn build_args(input: &Path, output: &Path, (gm, gs): (f32, f32)) -> Vec<String> {
     let filter = format!(
-        "[0:a:0][0:a:1]amix=inputs=2:duration=longest:normalize=0,\
+        "[0:a:0]volume={gm:.2}dB[m];[0:a:1]volume={gs:.2}dB[s];\
+         [m][s]amix=inputs=2:duration=longest:normalize=0,\
          alimiter=limit={LIMIT_LINEAR}:level=disabled[mix]"
     );
     [
@@ -261,6 +318,85 @@ mod tests {
                 return;
             }
         };
+    }
+
+    fn lv(mean: f32, peak: f32) -> Levels {
+        Levels {
+            mean_db: mean,
+            peak_db: peak,
+        }
+    }
+
+    // 用户实测到的场景：放着音乐说话，混音轨里音乐把人声完全盖掉
+    #[test]
+    fn loud_side_is_pulled_down_toward_the_quiet_one() {
+        let mic = lv(-35.0, -12.0); // 说话
+        let sys = lv(-12.0, -1.0); // 音乐
+        let (gm, gs) = balance(mic, sys);
+        let after = (mic.mean_db + gm) - (sys.mean_db + gs);
+        assert!(
+            after.abs() < 23.0,
+            "配平后差距应当明显变小，实际 {after:.1} dB"
+        );
+        assert!(
+            gs < gm,
+            "该被压的是响的那条（对方），实际 gm={gm:.1} gs={gs:.1}"
+        );
+    }
+
+    #[test]
+    fn attenuation_is_capped() {
+        // 差 60 dB 也不该把一条压到听不见
+        let (gm, gs) = balance(lv(-70.0, -40.0), lv(-10.0, 0.0));
+        assert!(gs - gm >= -MAX_ATTENUATION_DB - 0.01, "gm={gm} gs={gs}");
+    }
+
+    #[test]
+    fn balanced_pair_is_left_alone_apart_from_makeup() {
+        // 差在容差以内：两个人音量本来就不会完全一样，不该强行拉平
+        let (gm, gs) = balance(lv(-20.0, -6.0), lv(-23.0, -8.0));
+        assert!((gm - gs).abs() < 0.01, "只该有共同的补偿增益: {gm} {gs}");
+    }
+
+    #[test]
+    fn silent_track_disables_balancing() {
+        // 一条全程静音时压另一条只会让整个混音白白变小
+        let silent = lv(-91.0, -91.0);
+        assert_eq!(balance(lv(-20.0, -5.0), silent), (0.0, 0.0));
+        assert_eq!(balance(silent, lv(-20.0, -5.0)), (0.0, 0.0));
+    }
+
+    // 两条本来就接近满幅的轨相加必然过冲，那是 alimiter 的活，不是配平的。
+    // 配平该保证的是：补偿只在有余量时才加，且加完不越过目标峰值。
+    #[test]
+    fn makeup_only_uses_available_headroom() {
+        for (m, s) in [(-35.0, -12.0), (-20.0, -23.0), (-60.0, -8.0), (-6.0, -6.0)] {
+            let (mic, sys) = (lv(m, m + 20.0), lv(s, s + 20.0));
+            let (gm, gs) = balance(mic, sys);
+            let before = sum_db(mic.peak_db, sys.peak_db);
+            let after = sum_db(mic.peak_db + gm, sys.peak_db + gs);
+            assert!(
+                after <= before.max(MAKEUP_TARGET_PEAK_DB) + 0.01,
+                "配平把峰值从 {before:.1} 推到了 {after:.1} dB（{m}/{s}）"
+            );
+        }
+    }
+
+    // 没有余量时不该硬加补偿
+    #[test]
+    fn hot_tracks_get_no_makeup() {
+        let (gm, gs) = balance(lv(-20.0, 0.0), lv(-23.0, -3.0));
+        assert_eq!((gm, gs), (0.0, 0.0), "两条都快满幅了，不该再抬");
+    }
+
+    #[test]
+    fn gains_appear_in_the_filter_graph() {
+        let joined = build_args(Path::new("a.mkv"), Path::new("b.mkv"), (-3.5, 0.0)).join(" ");
+        assert!(joined.contains("volume=-3.50dB"), "{joined}");
+        assert!(joined.contains("volume=0.00dB"), "{joined}");
+        // 配平只作用在混音轨上，原始两轨仍然是 copy
+        assert!(joined.contains("-c:a:1 copy"), "{joined}");
+        assert!(joined.contains("-c:a:2 copy"), "{joined}");
     }
 
     #[test]

@@ -55,5 +55,10 @@ impl From<std::io::Error> for Error {
 pub struct MixReport {
     pub path: PathBuf,
     pub mix_peak_db: f32,
+    /// 原始双轨各自的电平，在混音之前量的——混完轨号会整体后移一位。
+    pub mic: Levels,
+    pub sys: Levels,
+    /// 为配平混音轨给两路各加的增益（dB）。(0, 0) 表示本来就够均衡。
+    pub balance_db: (f32, f32),
     pub skipped: bool,
 }

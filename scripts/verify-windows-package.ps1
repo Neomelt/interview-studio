@@ -58,5 +58,77 @@ if ($LASTEXITCODE -ne 0) { throw "随包的 ffprobe 起不来" }
 if ($streams.Count -ne 2) { throw "产物应当是双轨，实际 $($streams.Count) 轨" }
 Write-Host "    双轨 MKV 产出正常"
 
+Write-Host "==> 可执行文件的 Windows 资源"
+$exe = Join-Path $root "interview-studio.exe"
+
+# 子系统必须是 GUI(2) 而不是 CUI(3)：CUI 会在双击运行时额外弹一个控制台黑框。
+# 直接读 PE 头，不用把程序跑起来。
+$bytes = [System.IO.File]::ReadAllBytes($exe)
+$pe = [BitConverter]::ToInt32($bytes, 0x3C)
+# PE 签名(4) + COFF 头(20) = 可选头起点；Subsystem 在可选头偏移 68，
+# PE32 和 PE32+ 在这个位置上一致。
+$subsystem = [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
+if ($subsystem -ne 2) { throw "子系统是 $subsystem，应为 2 (GUI)，否则启动会带控制台" }
+Write-Host "    子系统 GUI，不会弹控制台"
+
+# 资源段里有版本信息，就说明 build.rs 的资源编译跑了——图标是同一次编进去的
+$info = (Get-Item $exe).VersionInfo
+if ($info.ProductName -ne "Interview Studio") {
+    throw "可执行文件没有嵌入资源（ProductName='$($info.ProductName)'），图标也就没进去"
+}
+Write-Host "    已嵌入资源：$($info.ProductName)"
+
+Write-Host "==> MSI 数据库"
+# 装出来对不对，看 MSI 自己的表最直接，不用真装一遍。
+$installer = New-Object -ComObject WindowsInstaller.Installer
+$db = $installer.GetType().InvokeMember(
+    "OpenDatabase", "InvokeMethod", $null, $installer, @($msi.FullName, 0))
+
+function Get-Column($sql) {
+    $view = $db.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $db, @($sql))
+    $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null) | Out-Null
+    $rows = @()
+    while ($true) {
+        $rec = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)
+        if (-not $rec) { break }
+        $rows += $rec.GetType().InvokeMember("StringData", "GetProperty", $null, $rec, 1)
+    }
+    $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null) | Out-Null
+    , $rows
+}
+
+function Assert-Contains($actual, $expected, $what) {
+    foreach ($e in $expected) {
+        if ($actual -notcontains $e) {
+            throw "$what 里缺 $e（实际有：$($actual -join ', ')）"
+        }
+    }
+    Write-Host "    $what ✓ $($expected -join ', ')"
+}
+
+# 快捷方式：开始菜单和桌面各一个，都可由用户勾掉
+Assert-Contains (Get-Column "SELECT Shortcut FROM Shortcut") `
+    @("StartMenuLink", "DesktopLink") "Shortcut 表"
+
+# 拆成独立 Feature 才勾得掉；主程序必须是 disallow-absent
+Assert-Contains (Get-Column "SELECT Feature FROM Feature") `
+    @("MainProgram", "StartMenuFeature", "DesktopFeature") "Feature 表"
+
+# CustomizeDlg 是能勾功能的那一页，BrowseDlg 是改安装路径的那一页。
+# 少哪个就等于对应的选项在界面上根本出不来。
+Assert-Contains (Get-Column "SELECT Dialog FROM Dialog") `
+    @("CustomizeDlg", "BrowseDlg") "Dialog 表"
+
+# 「浏览…」要改的是这个目录，没设的话按钮会指向别处
+Assert-Contains (Get-Column "SELECT Property FROM Property") `
+    @("WIXUI_INSTALLDIR", "ARPPRODUCTICON") "Property 表"
+
+$configurable = Get-Column "SELECT Directory_ FROM Feature WHERE Feature='MainProgram'"
+if ($configurable[0] -ne "APPLICATIONFOLDER") {
+    throw "MainProgram 的 ConfigurableDirectory 是 '$($configurable[0])'，浏览按钮改不了安装路径"
+}
+Write-Host "    安装路径可改 ✓ APPLICATIONFOLDER"
+
+[void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($db)
 Remove-Item -Recurse -Force $check -ErrorAction SilentlyContinue
 Write-Host "校验通过"

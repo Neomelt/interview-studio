@@ -69,7 +69,7 @@ if ($LASTEXITCODE -ne 0) { throw "candle 失败" }
 
 $msi = Join-Path $OutDir "interview-studio-v$Version-x86_64.msi"
 & $env:WIX_LIGHT -nologo -ext WixUIExtension `
-    -cultures:en-us `
+    -cultures:zh-CN `
     -out $msi "$OutDir\main.wixobj" "$OutDir\files.wixobj"
 if ($LASTEXITCODE -ne 0) { throw "light 失败" }
 

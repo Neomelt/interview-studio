@@ -4,9 +4,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use is_audio::{Backend, Device, LoopbackSource, Routing};
-use is_pipeline::{
-    Levels, Meter, RecordConfig, Recording, disk, mix_in_place, probe, track_levels,
-};
+use is_pipeline::{Levels, Meter, RecordConfig, Recording, disk, mix_in_place, probe};
 
 use crate::meters::{MeterBar, SILENT_DB};
 
@@ -55,6 +53,7 @@ struct Finished {
     mic: Levels,
     sys: Levels,
     mix_peak: f32,
+    balance_db: (f32, f32),
 }
 
 enum Stage {
@@ -185,19 +184,19 @@ impl App {
     }
 }
 
-// 电平在原始双轨上量（轨 0/1），量完再混音——混音后轨号会整体后移一位
+// 双轨电平由 mix_in_place 在混音之前量好一并带回来——混完轨号会整体后移
+// 一位，分开量容易量错对象，也白跑两遍 volumedetect。
 fn finish(rec: Recording) -> Result<Finished, String> {
     let path = rec.stop().map_err(|e| e.to_string())?;
-    let mic = track_levels(&path, 0).map_err(|e| e.to_string())?;
-    let sys = track_levels(&path, 1).map_err(|e| e.to_string())?;
     let report = mix_in_place(&path).map_err(|e| e.to_string())?;
     let duration = probe::duration_secs(&path).unwrap_or(0.0);
     Ok(Finished {
         path,
         duration,
-        mic,
-        sys,
+        mic: report.mic,
+        sys: report.sys,
         mix_peak: report.mix_peak_db,
+        balance_db: report.balance_db,
     })
 }
 
@@ -397,6 +396,9 @@ impl App {
                     );
                     verdict(ui, "我", f.mic);
                     verdict(ui, "对方", f.sys);
+                    if let Some(note) = balance_note(f.balance_db) {
+                        ui.colored_label(dim, note);
+                    }
                 });
             }
             _ => {
@@ -447,6 +449,23 @@ fn verdict(ui: &mut egui::Ui, who: &str, l: Levels) {
     ui.colored_label(color, format!("{who}　{text}"));
 }
 
+// 配平只动混音轨。写出来是为了让人知道：如果听感还是不对，该去听原始双轨，
+// 那两条永远是未经处理的。
+fn balance_note((gm, gs): (f32, f32)) -> Option<String> {
+    let gap = gm - gs;
+    if gap.abs() < 0.5 {
+        return None;
+    }
+    let (who, cut) = if gap > 0.0 {
+        ("对方", gap)
+    } else {
+        ("我", -gap)
+    };
+    Some(format!(
+        "混音轨已配平：{who}压低 {cut:.0} dB（原始双轨未改动）"
+    ))
+}
+
 fn hms(d: Duration) -> String {
     let s = d.as_secs();
     format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
@@ -462,6 +481,17 @@ fn visuals() -> egui::Visuals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn balance_note_names_the_side_that_was_turned_down() {
+        assert_eq!(balance_note((0.0, 0.0)), None);
+        // 共同的补偿增益不算配平，两边关系没变
+        assert_eq!(balance_note((6.0, 6.0)), None);
+        let n = balance_note((0.0, -17.0)).unwrap();
+        assert!(n.contains("对方") && n.contains("17"), "{n}");
+        let n = balance_note((-9.0, 0.0)).unwrap();
+        assert!(n.contains("我") && n.contains("9"), "{n}");
+    }
 
     #[test]
     fn hms_formats_hours_minutes_seconds() {

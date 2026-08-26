@@ -1,3 +1,7 @@
+// 不要控制台。默认的 console 子系统会在双击运行时额外弹一个黑框，关掉黑框
+// 程序也跟着没了。这个属性在非 Windows 目标上会被忽略。
+#![windows_subsystem = "windows"]
+
 mod app;
 mod fonts;
 mod icon;

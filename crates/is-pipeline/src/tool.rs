@@ -5,11 +5,25 @@ use std::process::Command;
 // PATH 上。所以先找和自己放在一起的那份，再退回 PATH——Linux 上后者就是包
 // 依赖装进 /usr/bin 的那份，行为不变。
 pub fn command(name: &str) -> Command {
-    match beside_exe(name) {
+    let mut c = match beside_exe(name) {
         Some(p) => Command::new(p),
         None => Command::new(name),
-    }
+    };
+    no_console(&mut c);
+    c
 }
+
+// 主程序是 windows 子系统，本身没有控制台；子进程默认会自己申请一个，于是
+// 每次探测、混音、校验都闪一个黑框。录一次要闪十几下。
+#[cfg(windows)]
+fn no_console(c: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    c.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn no_console(_c: &mut Command) {}
 
 fn beside_exe(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;

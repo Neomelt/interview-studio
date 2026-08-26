@@ -66,13 +66,22 @@ def draw_master() -> Image.Image:
     return img
 
 
+# Windows 从可执行文件的资源里取图标，不认 PNG，也不认单尺寸——任务栏、
+# Alt-Tab、资源管理器各取各的尺寸，缺哪个就自己缩放，缩出来是糊的。
+ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     master = draw_master()
     master.save(OUT / "icon-1024.png")
     for s in SIZES:
         master.resize((s, s), Image.LANCZOS).save(OUT / f"icon-{s}.png")
-    print(f"wrote {len(SIZES) + 1} PNGs to {OUT}")
+
+    master.resize((256, 256), Image.LANCZOS).save(
+        OUT / "icon.ico", sizes=[(s, s) for s in ICO_SIZES]
+    )
+    print(f"wrote {len(SIZES) + 1} PNGs and icon.ico ({len(ICO_SIZES)} sizes) to {OUT}")
 
 
 if __name__ == "__main__":
