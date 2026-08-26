@@ -123,6 +123,15 @@ Assert-Contains (Get-Column "SELECT Dialog FROM Dialog") `
 Assert-Contains (Get-Column "SELECT Property FROM Property") `
     @("WIXUI_INSTALLDIR", "ARPPRODUCTICON") "Property 表"
 
+# heat 采集的是产出 ZIP 的同一个目录，数量对不上就说明采集漏了东西。
+# 装出来少一个 DLL，用户要到按下停止那一刻才知道。
+$msiFiles = Get-Column "SELECT FileName FROM File"
+$staged = @(Get-ChildItem $root -File).Count
+if ($msiFiles.Count -ne $staged) {
+    throw "MSI 里 $($msiFiles.Count) 个文件，包目录里 $staged 个，对不上"
+}
+Write-Host "    File 表 ✓ $($msiFiles.Count) 个文件，与包目录一致"
+
 $configurable = Get-Column "SELECT Directory_ FROM Feature WHERE Feature='MainProgram'"
 if ($configurable[0] -ne "APPLICATIONFOLDER") {
     throw "MainProgram 的 ConfigurableDirectory 是 '$($configurable[0])'，浏览按钮改不了安装路径"
